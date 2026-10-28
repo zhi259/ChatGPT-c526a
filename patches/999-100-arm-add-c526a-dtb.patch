@@ -1,0 +1,4 @@
+--- a/arch/arm/boot/dts/qcom/Makefile
++++ b/arch/arm/boot/dts/qcom/Makefile
+@@ -1,0 +2 @@
++dtb-$(CONFIG_ARCH_QCOM) += qcom-ipq4019-c526a.dtb

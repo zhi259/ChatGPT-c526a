@@ -1,0 +1,47 @@
+name: ImmortalWrt 25.12.2 - HiWiFi C526A
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.config'
+      - 'files/**'
+      - 'patches/**'
+      - 'scripts/**'
+      - '.github/workflows/build-c526a.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Checkout C526A build template
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
+            gettext git libncurses-dev libssl-dev python3 python3-setuptools \
+            rsync unzip zlib1g-dev file wget curl ccache device-tree-compiler \
+            libelf-dev ecj fastjar java-propose-classpath
+
+      - name: Clone, patch, configure and build
+        env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+        run: bash scripts/build.sh
+
+      - name: Upload factory UBI and sysupgrade images
+        uses: actions/upload-artifact@v4
+        with:
+          name: immortalwrt-v25.12.2-hiwifi-c526a
+          if-no-files-found: error
+          path: |
+            immortalwrt/bin/targets/ipq40xx/generic/*hiwifi_c526a*factory.ubi
+            immortalwrt/bin/targets/ipq40xx/generic/*hiwifi_c526a*sysupgrade.bin
+            immortalwrt/bin/targets/ipq40xx/generic/sha256sums
