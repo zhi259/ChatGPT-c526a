@@ -74,13 +74,6 @@
 			status = "okay";
 		};
 
-		ess-switch@c000000 {
-			status = "okay";
-		};
-
-		edma@c080000 {
-			status = "okay";
-		};
 	};
 
 	leds {
@@ -107,6 +100,37 @@
 			linux,code = <KEY_RESTART>;
 		};
 	};
+};
+
+/* Linux 6.12 uses the DSA switch and IPQESS master-node labels from
+ * patches-6.12/707-arm-dts-ipq4019-add-switch-node.patch.  Do not recreate
+ * the legacy ess-switch@... / edma@... nodes used by the old 4.19/5.4 port.
+ */
+&switch {
+	status = "okay";
+};
+
+&gmac {
+	status = "okay";
+};
+
+/* The original C526A swconfig layout used switch ports 2, 3 and 4 for LAN.
+ * In the DSA layout these are lan2, lan3 and lan4; port 5 is exposed as WAN.
+ */
+&swport2 {
+	status = "okay";
+};
+
+&swport3 {
+	status = "okay";
+};
+
+&swport4 {
+	status = "okay";
+};
+
+&swport5 {
+	status = "okay";
 };
 
 &blsp_dma {

@@ -44,6 +44,7 @@ fi
 
 python3 - <<'PY'
 from pathlib import Path
+import re
 
 
 def read(path):
@@ -78,11 +79,32 @@ define Device/hiwifi_c526a
 	DEVICE_DTS := qcom-ipq4019-c526a
 	BLOCKSIZE := 128k
 	PAGESIZE := 2048
-	DEVICE_PACKAGES := ipq-wifi-hiwifi_c526a kmod-mt7615e kmod-mt7615-firmware kmod-ath10k ath10k-firmware-qca4019 -kmod-ath10k-ct -ath10k-firmware-qca4019-ct
+	DEVICE_PACKAGES := -ath10k-board-qca4019 ipq-wifi-hiwifi_c526a kmod-mt7615e kmod-mt7615-firmware kmod-ath10k ath10k-firmware-qca4019 -kmod-ath10k-ct -ath10k-firmware-qca4019-ct
 endef
 TARGET_DEVICES += hiwifi_c526a
 '''
-    write(p, s.rstrip() + "\n" + block.lstrip("\n") + "\n")
+    s = s.rstrip() + "\n" + block.lstrip("\n") + "\n"
+
+# Always exclude the generic QCA4019 board-data package for C526A. The generic
+# package provides a large upstream board-2.bin and can shadow the dedicated
+# 24,300-byte C526A board file even when ipq-wifi-hiwifi_c526a is selected.
+start = s.find("define Device/hiwifi_c526a")
+if start < 0:
+    raise SystemExit("ERROR: C526A Device block missing after insertion")
+end = s.find("\nendef", start)
+if end < 0:
+    raise SystemExit("ERROR: unterminated C526A Device block")
+block = s[start:end]
+match = re.search(r"(?m)^(\s*DEVICE_PACKAGES\s*:=)(.*)$", block)
+if not match:
+    raise SystemExit("ERROR: C526A Device block has no DEVICE_PACKAGES assignment")
+packages = match.group(2).split()
+packages = [item for item in packages if item not in ("ath10k-board-qca4019", "-ath10k-board-qca4019")]
+packages.insert(0, "-ath10k-board-qca4019")
+replacement = match.group(1) + " " + " ".join(packages)
+block = block[:match.start()] + replacement + block[match.end():]
+s = s[:start] + block + s[end:]
+write(p, s)
 
 # Register the custom QCA4019 board data with the current ipq-wifi package.
 p = "package/firmware/ipq-wifi/Makefile"
@@ -101,70 +123,117 @@ if "generate-ipq-wifi-package,hiwifi_c526a" not in s:
 write(p, s)
 
 # Device-specific switch topology and MAC addresses.
+# Linux 6.12 uses DSA for the built-in IPQ4019 QCA8337 switch. Do not generate
+# the legacy swconfig switch0/switch_vlan stanza from the 4.19/5.4-era port.
 p = "target/linux/ipq40xx/base-files/etc/board.d/02_network"
 s = read(p)
-fn = "ipq40xx_setup_interfaces()"
-pos = s.find(fn)
-if pos < 0:
-    raise SystemExit("ERROR: ipq40xx_setup_interfaces() not found")
-case = s.find('case "$board" in', pos)
-endfn = s.find("ipq40xx_setup_", pos + len(fn))
-if case < 0 or (endfn >= 0 and case > endfn):
-    raise SystemExit("ERROR: interfaces case block not found")
-line_end = s.find("\n", case)
-if "hiwifi,c526a)" not in s[case:(endfn if endfn >= 0 else len(s))]:
-    s = s[:line_end + 1] + (
-        '\thiWiFi_PLACEHOLDER)\n'
-    ).replace('\thiWiFi_PLACEHOLDER)', '\thiwifi,c526a)') + (
-        '\t\tucidef_set_interfaces_lan_wan "eth0" "eth1"\n'
-        '\t\tucidef_add_switch "switch0" \\\n'
-        '\t\t\t"0u@eth0" "2:lan" "3:lan" "4:lan"\n'
-        '\t\t;;\n'
-    ) + s[line_end + 1:]
 
-fn = "ipq40xx_setup_macs()"
-pos = s.find(fn)
-if pos < 0:
-    raise SystemExit("ERROR: ipq40xx_setup_macs() not found")
-case = s.find('case "$board" in', pos)
-endfn = s.find("}\n", pos)
-if case < 0:
-    raise SystemExit("ERROR: MAC case block not found")
-line_end = s.find("\n", case)
-if "hiwifi,c526a)" not in s[case:(endfn if endfn >= 0 else len(s))]:
-    s = s[:line_end + 1] + (
-        '\thiwifi,c526a)\n'
-        '\t\tlan_mac=$(mtd_get_mac_ascii bdinfo "Vfac_mac ")\n'
-        '\t\tlabel_mac=$lan_mac\n'
-        '\t\twan_mac=$(macaddr_add "$lan_mac" 1)\n'
-        '\t\t;;\n'
-    ) + s[line_end + 1:]
+
+def replace_board_case(text, function_name, board, block):
+    import re
+    pos = text.find(function_name)
+    if pos < 0:
+        raise SystemExit(f"ERROR: {function_name} not found")
+    next_fn = text.find("\nipq40xx_setup_", pos + len(function_name))
+    end = next_fn if next_fn >= 0 else len(text)
+    chunk = text[pos:end]
+    case_idx = chunk.find('case "$board" in')
+    if case_idx < 0:
+        raise SystemExit(f"ERROR: case block not found in {function_name}")
+    import re
+    pattern = re.compile(r"(?m)^[ \t]*" + re.escape(board) + r"\)[ \t]*\n.*?^[ \t]*;;[ \t]*(?:\n|$)", re.S)
+    matches = list(pattern.finditer(chunk))
+    if len(matches) > 1:
+        raise SystemExit(f"ERROR: multiple {board} cases in {function_name}")
+    if matches:
+        chunk = chunk[:matches[0].start()] + block + chunk[matches[0].end():]
+    else:
+        line_end = chunk.find("\n", case_idx)
+        if line_end < 0:
+            raise SystemExit(f"ERROR: malformed case statement in {function_name}")
+        chunk = chunk[:line_end + 1] + block + chunk[line_end + 1:]
+    return text[:pos] + chunk + text[end:]
+
+
+interfaces_block = (
+    '\thiwifi,c526a)\n'
+    '\t\t# DSA port labels from the Linux 6.12 IPQ4019 switch node.\n'
+    '\t\tucidef_set_interfaces_lan_wan "lan2 lan3 lan4" "wan"\n'
+    '\t\t;;\n'
+)
+s = replace_board_case(s, "ipq40xx_setup_interfaces()", "hiwifi,c526a", interfaces_block)
+
+macs_block = (
+    '\thiwifi,c526a)\n'
+    '\t\tlan_mac=$(mtd_get_mac_ascii bdinfo "Vfac_mac ")\n'
+    '\t\tif echo "$lan_mac" | grep -Eq "^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$"; then\n'
+    '\t\t\tlabel_mac=$lan_mac\n'
+    '\t\t\twan_mac=$(macaddr_add "$lan_mac" 1)\n'
+    '\t\telse\n'
+    '\t\t\t# Do not emit an invalid MAC address when factory lookup fails.\n'
+    '\t\t\tlan_mac=""\n'
+    '\t\t\twan_mac=""\n'
+    '\t\tfi\n'
+    '\t\t;;\n'
+)
+s = replace_board_case(s, "ipq40xx_setup_macs()", "hiwifi,c526a", macs_block)
 write(p, s)
 
-# Use ART caldata, while deriving unique ath10k MACs from bdinfo/Vfac_mac.
+# C526A ath10k factory data comes from ART. Apply the board MAC only when the
+# expected bdinfo key actually contains a syntactically valid MAC address.
 p = "target/linux/ipq40xx/base-files/etc/hotplug.d/firmware/11-ath10k-caldata"
 s = read(p)
-old = '"ath10k/pre-cal-ahb-a000000.wifi.bin")\n\tcase "$board" in\n'
-new = old + (
+
+
+def update_ath10k_case(text, firmware_marker, board_block):
+    import re
+    marker_pos = text.find(firmware_marker)
+    if marker_pos < 0:
+        raise SystemExit(f"ERROR: ath10k firmware section not found: {firmware_marker}")
+    case_pos = text.find('case "$board" in', marker_pos)
+    if case_pos < 0:
+        raise SystemExit(f"ERROR: nested board case not found after {firmware_marker}")
+    nested = text[case_pos:]
+    esac_match = re.search(r"(?m)^[ \t]*esac[ \t]*$", nested)
+    if not esac_match:
+        raise SystemExit(f"ERROR: nested board case has no esac after {firmware_marker}")
+    case_end = case_pos + esac_match.end()
+    case_text = text[case_pos:case_end]
+    pattern = re.compile(r"(?m)^[ \t]*hiwifi,c526a\)[ \t]*\n.*?^[ \t]*;;[ \t]*(?:\n|$)", re.S)
+    matches = list(pattern.finditer(case_text))
+    if len(matches) > 1:
+        raise SystemExit(f"ERROR: multiple C526A cases after {firmware_marker}")
+    if matches:
+        case_text = case_text[:matches[0].start()] + board_block + case_text[matches[0].end():]
+    else:
+        line_end = case_text.find("\n", case_text.find('case "$board" in'))
+        if line_end < 0:
+            raise SystemExit(f"ERROR: malformed board case after {firmware_marker}")
+        case_text = case_text[:line_end + 1] + board_block + case_text[line_end + 1:]
+    return text[:case_pos] + case_text + text[case_end:]
+
+
+low_band_block = (
     '\thiwifi,c526a)\n'
     '\t\tcaldata_extract "ART" 0x1000 0x2f20\n'
-    '\t\tath10k_patch_mac $(macaddr_add $(mtd_get_mac_ascii bdinfo "Vfac_mac ") +2)\n'
+    '\t\tlan_mac=$(mtd_get_mac_ascii bdinfo "Vfac_mac ")\n'
+    '\t\tif echo "$lan_mac" | grep -Eq "^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$"; then\n'
+    '\t\t\tath10k_patch_mac "$(macaddr_add "$lan_mac" +2)"\n'
+    '\t\tfi\n'
     '\t\t;;\n'
 )
-if "hiwifi,c526a)" not in s[s.find('"ath10k/pre-cal-ahb-a000000.wifi.bin")'):s.find('"ath10k/pre-cal-ahb-a800000.wifi.bin")')]:
-    s = once(s, old, new, "C526A 5 GHz low-band caldata")
-old = '"ath10k/pre-cal-ahb-a800000.wifi.bin")\n\tcase "$board" in\n'
-new = old + (
+s = update_ath10k_case(s, '"ath10k/pre-cal-ahb-a000000.wifi.bin")', low_band_block)
+
+high_band_block = (
     '\thiwifi,c526a)\n'
     '\t\tcaldata_extract "ART" 0x5000 0x2f20\n'
-    '\t\tath10k_patch_mac $(macaddr_add $(mtd_get_mac_ascii bdinfo "Vfac_mac ") +3)\n'
+    '\t\tlan_mac=$(mtd_get_mac_ascii bdinfo "Vfac_mac ")\n'
+    '\t\tif echo "$lan_mac" | grep -Eq "^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$"; then\n'
+    '\t\t\tath10k_patch_mac "$(macaddr_add "$lan_mac" +3)"\n'
+    '\t\tfi\n'
     '\t\t;;\n'
 )
-idx = s.find('"ath10k/pre-cal-ahb-a800000.wifi.bin")')
-if idx < 0:
-    raise SystemExit("ERROR: second ath10k AHB pre-cal section not found")
-if "hiwifi,c526a)" not in s[idx:]:
-    s = once(s, old, new, "C526A 5 GHz high-band caldata")
+s = update_ath10k_case(s, '"ath10k/pre-cal-ahb-a800000.wifi.bin")', high_band_block)
 write(p, s)
 
 # NAND sysupgrade handler for the single UBI partition.
@@ -179,7 +248,11 @@ PY
 
 # Sanity-check that all registration points made it into the source tree.
 grep -q 'define Device/hiwifi_c526a' target/linux/ipq40xx/image/generic.mk
+grep -q 'DEVICE_PACKAGES := -ath10k-board-qca4019' target/linux/ipq40xx/image/generic.mk
 grep -q 'hiwifi_c526a' package/firmware/ipq-wifi/Makefile
 grep -q 'hiwifi,c526a' target/linux/ipq40xx/base-files/etc/board.d/02_network
+grep -q 'ucidef_set_interfaces_lan_wan "lan2 lan3 lan4" "wan"' target/linux/ipq40xx/base-files/etc/board.d/02_network
+! grep -q 'ess-switch@c000000' target/linux/ipq40xx/files/arch/arm/boot/dts/qcom/qcom-ipq4019-c526a.dts
+! grep -q 'edma@c080000' target/linux/ipq40xx/files/arch/arm/boot/dts/qcom/qcom-ipq4019-c526a.dts
 grep -q 'qcom-ipq4019-c526a.dtb' target/linux/ipq40xx/patches-6.12/999-100-arm-add-c526a-dtb.patch
 echo "C526A support patch applied."

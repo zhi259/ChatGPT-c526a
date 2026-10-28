@@ -1,3 +1,5 @@
+> **以太网修正版（v2）：** 本工具包针对 ImmortalWrt 25.12.2 / Linux 6.12 的 DSA 网络栈。旧 DTS 使用的 `ess-switch@c000000` / `edma@c080000` 不再对应当前内核中的真实节点；修正版改用 `&switch` / `&gmac`，并显式启用交换机端口。默认将原版定义中的端口 2–4 用作 LAN，并将端口 5 暴露为 WAN。端口映射仍需在实际设备上插拔网线验证。
+
 # ImmortalWrt v25.12.2 — HiWiFi C526A build kit
 
 本模板把 LEDE `2f74b3efffd5b1929d5a31d76e763b927aebf759` 中的极路由 X C526A（Qualcomm IPQ4019 / ipq40xx）支持移植到 ImmortalWrt `v25.12.2`，并由 GitHub Actions 编译 `factory.ubi` 与 `sysupgrade.bin`。
@@ -19,6 +21,20 @@
 4. 成功后从 Actions 的 Artifacts 下载 `immortalwrt-v25.12.2-hiwifi-c526a`，其中应包含 `*hiwifi_c526a*factory.ubi` 和 `*hiwifi_c526a*sysupgrade.bin`。
 
 脚本会克隆固定 tag `v25.12.2`，应用设备定义，下载并验证 BDF，随后运行 `make defconfig`、`make download` 和 `make`。脚本可重复执行，不会重复添加设备定义。
+
+## 针对无线上网正常、所有网口均无链路的修正
+
+如果刷入旧版模板后，`eth0`、`eth1` 均显示未连接，且日志没有 MDIO/PHY/IPQESS 初始化信息，说明只调整 `/etc/config/network` 并不够。Linux 6.12 的 IPQ4019 DSA 需要启用内核 `707-arm-dts-ipq4019-add-switch-node.patch` 定义的 `&switch` 与 `&gmac` 节点；本工具包已移除旧的 `ess-switch@c000000` / `edma@c080000` 节点，改为启用 DSA 交换机及外部端口。板级网络默认使用 `lan2 lan3 lan4` 和 `wan`，不再产生旧 `switch0` / `switch_vlan` 配置。
+
+若设备已有旧配置，sysupgrade 可能保留 `/etc/config/network`，造成旧 `eth0` / `eth1` 配置仍在。刷入修正版时请先备份配置，并在 LuCI 中取消“保留设置”（或使用全新配置）进行验证。刷机后先运行 `ip link show`（BusyBox 的 `ip -br link` 不一定受支持），确认是否出现 `lan2`、`lan3`、`lan4`、`wan`。物理端口映射尚需根据实际设备插拔网线确认。
+
+工具包也会在 `Vfac_mac` 读取结果不是合法 MAC 地址时跳过覆盖，避免生成 `option macaddr ':'`；这不能替代对设备 `bdinfo` 分区中实际 MAC 存储格式的核查。
+
+## 无线校准数据修正（v3）
+
+C526A DTS 为两组 QCA4019 射频声明 `qcom,ath10k-calibration-variant = "C526A"`。原始 LEDE 支持提交里的 `board-hiwifi_c526a.qca4019` 专用 BDF 为 24,300 字节；若运行系统中的 `/lib/firmware/ath10k/QCA4019/hw1.0/board-2.bin` 仍约 1.9 MB，且 `strings` 中没有 `variant=C526A`，通常表示通用 `ath10k-board-qca4019` 文件仍在生效，专用 BDF 没有正确覆盖。ath10k 会根据总线、BMI ID 和可能的 calibration variant 查找板级数据，通用回退数据可能影响射频校准与能力。
+
+v3 在 `Device/hiwifi_c526a` 中显式添加 `-ath10k-board-qca4019`，并确保重复运行应用脚本时仍保留该排除项；同时保留 `ipq-wifi-hiwifi_c526a` 专用包和标准（非 CT）ath10k 固件。此修改是修复 BDF 包选择，不保证单独解决全部扫描灵敏度问题。编译后应验证最终根文件系统的 `board-2.bin` 已是 C526A 专用数据，再进行 radio1 与 radio2 的同信道 RSSI/扫描率测试。
 
 ## 重要风险提醒
 
