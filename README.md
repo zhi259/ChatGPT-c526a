@@ -1,3 +1,5 @@
+> **v4 紧急修复：** 修复专用 QCA4019 BDF 没有进入最终根文件系统的问题。构建会验证 `board-2.bin` 的存在、大小和 SHA-1，不符合时直接失败。
+
 > **以太网修正版（v2）：** 本工具包针对 ImmortalWrt 25.12.2 / Linux 6.12 的 DSA 网络栈。旧 DTS 使用的 `ess-switch@c000000` / `edma@c080000` 不再对应当前内核中的真实节点；修正版改用 `&switch` / `&gmac`，并显式启用交换机端口。默认将原版定义中的端口 2–4 用作 LAN，并将端口 5 暴露为 WAN。端口映射仍需在实际设备上插拔网线验证。
 
 # ImmortalWrt v25.12.2 — HiWiFi C526A build kit
@@ -30,11 +32,11 @@
 
 工具包也会在 `Vfac_mac` 读取结果不是合法 MAC 地址时跳过覆盖，避免生成 `option macaddr ':'`；这不能替代对设备 `bdinfo` 分区中实际 MAC 存储格式的核查。
 
-## 无线校准数据修正（v3）
+## 无线校准数据修正（v4）
 
-C526A DTS 为两组 QCA4019 射频声明 `qcom,ath10k-calibration-variant = "C526A"`。原始 LEDE 支持提交里的 `board-hiwifi_c526a.qca4019` 专用 BDF 为 24,300 字节；若运行系统中的 `/lib/firmware/ath10k/QCA4019/hw1.0/board-2.bin` 仍约 1.9 MB，且 `strings` 中没有 `variant=C526A`，通常表示通用 `ath10k-board-qca4019` 文件仍在生效，专用 BDF 没有正确覆盖。ath10k 会根据总线、BMI ID 和可能的 calibration variant 查找板级数据，通用回退数据可能影响射频校准与能力。
+C526A DTS 为两组 QCA4019 射频声明 `qcom,ath10k-calibration-variant = "C526A"`。原始 LEDE 支持提交里的 `board-hiwifi_c526a.qca4019` 专用 BDF 为 24,300 字节。用户刷入 v3 后，两个 ath10k 都报 `failed to fetch board-2.bin or board.bin`，而 `/lib/firmware/ath10k/QCA4019/hw1.0/` 仅有 `firmware-5.bin`。这证明 v3 的构建脚本把本地 BDF 放进 `package/firmware/ipq-wifi/files/`，却没有复制到该包的 `PKG_BUILD_DIR`，导致专用包虽然存在，最终镜像却没有 `board-2.bin`。
 
-v3 在 `Device/hiwifi_c526a` 中显式添加 `-ath10k-board-qca4019`，并确保重复运行应用脚本时仍保留该排除项；同时保留 `ipq-wifi-hiwifi_c526a` 专用包和标准（非 CT）ath10k 固件。此修改是修复 BDF 包选择，不保证单独解决全部扫描灵敏度问题。编译后应验证最终根文件系统的 `board-2.bin` 已是 C526A 专用数据，再进行 radio1 与 radio2 的同信道 RSSI/扫描率测试。
+v4 修复 `package/firmware/ipq-wifi/Makefile` 的 `Build/Prepare`，在默认解包/打补丁后将本地 `board-hiwifi_c526a.qca4019` 复制到 `$(PKG_BUILD_DIR)`，供 `install-overlay` 的 `wildcard board-hiwifi_c526a.*` 匹配。设备仍排除通用 `ath10k-board-qca4019`，并保留专用 `ipq-wifi-hiwifi_c526a` 和标准（非 CT）ath10k 固件。构建结束时新增检查：若根文件系统缺少 `board-2.bin`、大小不是 24,300 字节或 Git blob SHA-1 与原始文件不符，构建将失败，而不是再次产出两组 QCA4019 都无法启动的固件。
 
 ## 重要风险提醒
 

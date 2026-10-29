@@ -42,6 +42,29 @@ if [[ ! -s "$BDF_PATH" ]] || [[ "$(git hash-object "$BDF_PATH" 2>/dev/null || tr
 	mv "$BDF_PATH.tmp" "$BDF_PATH"
 fi
 
+# Make sure the local BDF is staged into PKG_BUILD_DIR: the ipq-wifi package's
+# install-overlay only searches that directory, not package/firmware/ipq-wifi/files.
+python3 - "$ROOT/package/firmware/ipq-wifi/Makefile" <<'PYBDFPREP'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text()
+marker = "# C526A local BDF staging (required by install-overlay)"
+if marker not in s:
+    needle = "define Build/Compile\n"
+    if s.count(needle) != 1:
+        raise SystemExit("ERROR: cannot uniquely locate ipq-wifi Build/Compile to stage C526A BDF")
+    block = (
+        marker + "\n"
+        "define Build/Prepare\n"
+        "\t$(call Build/Prepare/Default)\n"
+        "\t$(CP) $(TOPDIR)/package/firmware/ipq-wifi/files/board-hiwifi_c526a.qca4019 $(PKG_BUILD_DIR)/\n"
+        "endef\n\n"
+    )
+    s = s.replace(needle, block + needle, 1)
+p.write_text(s)
+PYBDFPREP
+
 python3 - <<'PY'
 from pathlib import Path
 import re
