@@ -9,6 +9,7 @@ on:
       - 'files/**'
       - 'patches/**'
       - 'scripts/**'
+      - 'packages/**'
       - '.github/workflows/build-c526a.yml'
 
 permissions:

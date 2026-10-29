@@ -10,11 +10,90 @@ if [[ ! -d "$SOURCE_DIR/.git" ]]; then
 fi
 
 cd "$SOURCE_DIR"
+
+# Add feeds required by this .config BEFORE running feeds update/install.
+# PassWall's upstream README recommends placing its feeds before stock feeds
+# so the current PassWall packages win over older duplicates.
+LIQUID_SRC="$WORKSPACE/SingBox-Formula"
+if [[ ! -d "$LIQUID_SRC/.git" ]]; then
+    git clone --depth 1 https://github.com/crackerfly/SingBox-Formula.git "$LIQUID_SRC"
+else
+    git -C "$LIQUID_SRC" fetch --depth 1 origin main
+    git -C "$LIQUID_SRC" checkout -q FETCH_HEAD
+fi
+[[ -d "$LIQUID_SRC/openwrt-feed/liquid-formula" ]] || {
+    echo "ERROR: Liquid Formula OpenWrt feed is missing" >&2
+    exit 1
+}
+[[ -d "$LIQUID_SRC/openwrt-feed/luci-app-liquid-formula" ]] || {
+    echo "ERROR: Liquid Formula LuCI feed is missing" >&2
+    exit 1
+}
+
+# Argon 3.1.0 is a standalone package repository, so wrap it as a one-package
+# feed instead of pointing feeds.conf.default directly at a package root.
+ARGON_SRC="$WORKSPACE/luci-theme-argon-src"
+ARGON_FEED="$WORKSPACE/argon-feed"
+if [[ ! -d "$ARGON_SRC/.git" ]]; then
+    git clone --depth 1 --branch v3.1.0 https://github.com/jerrykuku/luci-theme-argon.git "$ARGON_SRC"
+else
+    git -C "$ARGON_SRC" fetch --depth 1 origin tag v3.1.0
+    git -C "$ARGON_SRC" checkout -q v3.1.0
+fi
+rm -rf "$ARGON_FEED"
+mkdir -p "$ARGON_FEED/luci-theme-argon"
+git -C "$ARGON_SRC" archive --format=tar v3.1.0 | tar -xf - -C "$ARGON_FEED/luci-theme-argon"
+
+python3 - "$WORKSPACE/SingBox-Formula/openwrt-feed" "$ARGON_FEED" <<'PYFEEDS'
+from pathlib import Path
+import sys
+feed_file = Path("feeds.conf.default")
+liquid_source = Path(sys.argv[1]).resolve()
+argon_source = Path(sys.argv[2]).resolve()
+if not feed_file.exists():
+    raise SystemExit("ERROR: feeds.conf.default not found")
+existing = feed_file.read_text().splitlines()
+required = [
+    "src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git;main",
+    "src-git passwall_luci https://github.com/Openwrt-Passwall/openwrt-passwall.git;main",
+    f"src-link argon {argon_source}",
+    f"src-link liquid_formula {liquid_source}",
+]
+# Feed order matters for duplicate package names; these entries go first.
+missing = [line for line in required if line not in existing]
+if missing:
+    feed_file.write_text("\n".join(missing + existing).rstrip() + "\n")
+print("Configured PassWall, Argon 3.1.0 and Liquid Formula feeds")
+PYFEEDS
+
 ./scripts/feeds update -a
 ./scripts/feeds install -a
+
+# Fail early if any requested application feed was not installed.
+for pkgdir in \
+    feeds/passwall_luci/luci-app-passwall \
+    feeds/argon/luci-theme-argon \
+    feeds/liquid_formula/liquid-formula \
+    feeds/liquid_formula/luci-app-liquid-formula; do
+    [[ -d "$pkgdir" ]] || {
+        echo "ERROR: required feed package was not installed: $pkgdir" >&2
+        exit 1
+    }
+done
+
 bash "$KIT_DIR/scripts/apply-c526a.sh" "$SOURCE_DIR"
 cp "$KIT_DIR/.config" .config
 make defconfig
+for symbol in \
+    CONFIG_PACKAGE_luci-app-passwall \
+    CONFIG_PACKAGE_liquid-formula \
+    CONFIG_PACKAGE_luci-app-liquid-formula \
+    CONFIG_PACKAGE_luci-theme-argon; do
+    if ! grep -qx "${symbol}=y" .config; then
+        echo "ERROR: make defconfig did not retain ${symbol}=y; check its feed/package dependencies" >&2
+        exit 1
+    fi
+done
 make download -j8
 # v25.12.2 targets Linux 6.12 for ipq40xx; all images are built from the target config.
 make -j2 V=s
