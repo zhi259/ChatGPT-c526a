@@ -22,9 +22,8 @@ else
     git -C "$TEMP_SRC" fetch --depth 1 origin main
     git -C "$TEMP_SRC" checkout -q FETCH_HEAD
 fi
-# Stage it outside the OpenWrt source until feeds have been installed. A
-# custom package placed directly at package/<name>/ is not part of all standard
-# package scan lists; it will be copied to package/feeds/c526a_local below.
+# Stage it outside the OpenWrt source until feeds have been installed; it is
+# copied under package/feeds/c526a_local below for reliable package discovery.
 TEMP_PACKAGE_SRC="$WORKSPACE/local-package-src/luci-app-temp"
 rm -rf "$TEMP_PACKAGE_SRC" "$SOURCE_DIR/package/luci-app-temp"
 mkdir -p "$TEMP_PACKAGE_SRC"
@@ -32,24 +31,31 @@ git -C "$TEMP_SRC" archive --format=tar HEAD | tar -xf - -C "$TEMP_PACKAGE_SRC"
 python3 "$KIT_DIR/scripts/patch-temp-widget.py" "$TEMP_PACKAGE_SRC"
 printf 'TEMP_WIDGET_COMMIT=%s\n' "$(git -C "$TEMP_SRC" rev-parse HEAD)" >> "$WORKSPACE/source-info.txt"
 
-# Stage the C526A wizard for a local feed. If feeds indexing misses the package,
-# the robust fallback later installs it under package/feeds/c526a_local/, a path
-# that the build's package metadata scan recognizes.
-WIZARD_SRC="$KIT_DIR/package/luci-app-c526a-wizard"
-[[ -f "$WIZARD_SRC/Makefile" && -f "$WIZARD_SRC/htdocs/luci-static/resources/view/c526a/wizard.js" ]] || {
-    echo "ERROR: local C526A network wizard package is incomplete" >&2
-    exit 1
-}
-WIZARD_FEED="$WORKSPACE/c526a-local-feed"
-rm -rf "$WIZARD_FEED"
-mkdir -p "$WIZARD_FEED/luci-app-c526a-wizard"
-cp -a "$WIZARD_SRC/." "$WIZARD_FEED/luci-app-c526a-wizard/"
-
-# Apply the rootfs overlay for first-boot LAN defaults and the Liquid Formula guide.
-if [[ -d "$KIT_DIR/rootfs-overlay" ]]; then
-    mkdir -p "$SOURCE_DIR/files"
-    cp -a "$KIT_DIR/rootfs-overlay/." "$SOURCE_DIR/files/"
-fi
+# Install the C526A LuCI pages and rpcd helper through OpenWrt's standard
+# rootfs overlay. These pages are interpreted JavaScript plus a shell RPC helper;
+# they do not need to be a separately indexed package. This intentionally avoids
+# the repeated failure where Makefile exists but the custom package is absent
+# from tmp/.packageinfo and make defconfig drops its CONFIG_PACKAGE option.
+WIZARD_OVERLAY="$KIT_DIR/rootfs-overlay"
+for rel in \
+    www/luci-static/resources/view/c526a/wizard.js \
+    www/luci-static/resources/view/c526a/guestwifi.js \
+    www/luci-static/resources/view/status/include/29_c526a_traffic.js \
+    usr/libexec/rpcd/luci.c526a_traffic \
+    usr/share/rpcd/acl.d/luci-app-c526a-wizard.json \
+    usr/share/luci/menu.d/luci-app-c526a-wizard.json; do
+    [[ -f "$WIZARD_OVERLAY/$rel" ]] || {
+        echo "ERROR: required C526A LuCI overlay file is missing: $WIZARD_OVERLAY/$rel" >&2
+        exit 1
+    }
+done
+mkdir -p "$SOURCE_DIR/files"
+cp -a "$WIZARD_OVERLAY/." "$SOURCE_DIR/files/"
+chmod 0755 "$SOURCE_DIR/files/usr/libexec/rpcd/luci.c526a_traffic"
+# Remove stale copies in a reused source tree; the wizard is now an overlay,
+# not a package selected through feeds or .config.
+rm -rf "$SOURCE_DIR/package/luci-app-c526a-wizard" \
+    "$SOURCE_DIR/package/feeds/c526a_local/luci-app-c526a-wizard"
 
 # Add feeds required by this .config BEFORE running feeds update/install.
 # PassWall's upstream README recommends placing its feeds before stock feeds
@@ -86,20 +92,18 @@ mkdir -p "$ARGON_FEED/luci-theme-argon"
 git -C "$ARGON_SRC" archive --format=tar v3.1.0 | tar -xf - -C "$ARGON_FEED/luci-theme-argon"
 printf 'ARGON_COMMIT=%s\n' "$(git -C "$ARGON_SRC" rev-parse v3.1.0)" >> "$WORKSPACE/source-info.txt"
 
-python3 - "$WORKSPACE/SingBox-Formula/openwrt-feed" "$ARGON_FEED" "$WIZARD_FEED" <<'PYFEEDS'
+python3 - "$WORKSPACE/SingBox-Formula/openwrt-feed" "$ARGON_FEED" <<'PYFEEDS'
 from pathlib import Path
 import sys
 feed_file = Path("feeds.conf.default")
 liquid_source = Path(sys.argv[1]).resolve()
 argon_source = Path(sys.argv[2]).resolve()
-wizard_source = Path(sys.argv[3]).resolve()
 if not feed_file.exists():
     raise SystemExit("ERROR: feeds.conf.default not found")
 existing = feed_file.read_text().splitlines()
 required = [
     "src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git;main",
     "src-git passwall_luci https://github.com/Openwrt-Passwall/openwrt-passwall.git;main",
-    f"src-link c526a_local {wizard_source}",
     f"src-link argon {argon_source}",
     f"src-link liquid_formula {liquid_source}",
 ]
@@ -112,55 +116,21 @@ PYFEEDS
 
 ./scripts/feeds update -a
 
-# Rebuild the local feed index after all feeds are available. If the custom
-# feed index still omits this LuCI app, fall back to OpenWrt's normal local
-# package/ directory instead of aborting before defconfig. The final config
-# assertion below remains strict, so the image cannot silently omit the app.
-./scripts/feeds update c526a_local
-if ./scripts/feeds list -r c526a_local | awk '$1 == "luci-app-c526a-wizard" { found=1 } END { exit !found }'; then
-    if ! ./scripts/feeds install -f -p c526a_local luci-app-c526a-wizard; then
-        echo "WARNING: feed install failed; will use package/feeds/c526a_local fallback" >&2
-    fi
-else
-    echo "WARNING: luci-app-c526a-wizard is absent from c526a_local index; using package/feeds/c526a_local fallback" >&2
-    ./scripts/feeds list -r c526a_local >&2 || true
-fi
 ./scripts/feeds install -a
 
-# Robust fallback: install under package/feeds/<feed>/<package>, which is a
-# directory OpenWrt actually scans for package metadata. A package copied to
-# package/<name>/ is NOT reliably indexed by the build's package Makefiles and
-# was the reason make defconfig silently removed CONFIG_PACKAGE_luci-app-c526a-wizard.
-WIZARD_PACKAGE_DIR="$SOURCE_DIR/package/feeds/c526a_local/luci-app-c526a-wizard"
-# Remove the earlier incorrect fallback path if a reused workspace has it.
-rm -rf "$SOURCE_DIR/package/luci-app-c526a-wizard"
-if [[ ! -f "$WIZARD_PACKAGE_DIR/Makefile" || ! -f "$WIZARD_PACKAGE_DIR/htdocs/luci-static/resources/view/c526a/wizard.js" ]]; then
-    echo "NOTICE: installing C526A wizard into recognized package/feeds/c526a_local path" >&2
-    rm -rf "$WIZARD_PACKAGE_DIR"
-    mkdir -p "$(dirname "$WIZARD_PACKAGE_DIR")"
-    cp -a "$WIZARD_SRC" "$WIZARD_PACKAGE_DIR"
-fi
-if [[ ! -f "$WIZARD_PACKAGE_DIR/Makefile" || ! -f "$WIZARD_PACKAGE_DIR/htdocs/luci-static/resources/view/c526a/wizard.js" ]]; then
-    echo "ERROR: C526A wizard is still missing from the recognized package/feeds/c526a_local path" >&2
-    find "$WIZARD_SRC" -maxdepth 5 -type f -print >&2 || true
-    exit 1
-fi
-# The temperature widget is also a local package, and must be placed in the same
-# recognized package/feeds scan path as the wizard (not package/luci-app-temp).
+# The upstream temperature widget is a real package. Stage it in the standard
+# package/feeds scan tree and validate its metadata after defconfig. The C526A
+# wizard, guest Wi-Fi UI, WAN-rate widget, menu, ACL and RPC helper are instead
+# installed via the rootfs overlay above, so they need no package index entry.
 TEMP_PACKAGE_DIR="$SOURCE_DIR/package/feeds/c526a_local/luci-app-temp"
-rm -rf "$SOURCE_DIR/package/luci-app-temp"
-if [[ ! -f "$TEMP_PACKAGE_DIR/Makefile" ]]; then
-    echo "NOTICE: installing temperature widget into recognized package/feeds/c526a_local path" >&2
-    rm -rf "$TEMP_PACKAGE_DIR"
-    mkdir -p "$(dirname "$TEMP_PACKAGE_DIR")"
-    cp -a "$TEMP_PACKAGE_SRC" "$TEMP_PACKAGE_DIR"
-fi
-if [[ ! -f "$TEMP_PACKAGE_DIR/Makefile" ]]; then
-    echo "ERROR: temperature widget Makefile missing from recognized package/feeds/c526a_local path" >&2
+rm -rf "$SOURCE_DIR/package/luci-app-temp" "$TEMP_PACKAGE_DIR"
+mkdir -p "$(dirname "$TEMP_PACKAGE_DIR")"
+cp -a "$TEMP_PACKAGE_SRC" "$TEMP_PACKAGE_DIR"
+[[ -f "$TEMP_PACKAGE_DIR/Makefile" ]] || {
+    echo "ERROR: temperature widget Makefile missing from $TEMP_PACKAGE_DIR" >&2
     find "$TEMP_PACKAGE_SRC" -maxdepth 4 -type f -print >&2 || true
     exit 1
-fi
-# Use the standard package/feeds scan path only; no package/<name> fallback.
+}
 
 # Translate the Liquid Formula LuCI views before configuring/building packages.
 python3 "$KIT_DIR/scripts/patch-liquid-formula-zh.py" "$SOURCE_DIR/feeds/liquid_formula/luci-app-liquid-formula"
@@ -208,20 +178,16 @@ done
 bash "$KIT_DIR/scripts/apply-c526a.sh" "$SOURCE_DIR"
 cp "$KIT_DIR/.config" .config
 make defconfig
-for local_pkg in luci-app-c526a-wizard luci-app-temp; do
-    if ! grep -q "$local_pkg" tmp/.packageinfo 2>/dev/null; then
-        echo "ERROR: OpenWrt did not index local package '$local_pkg' after make defconfig" >&2
-        echo "Wizard package directory: $WIZARD_PACKAGE_DIR" >&2
-        echo "Temperature package directory: $TEMP_PACKAGE_DIR" >&2
-        find "$SOURCE_DIR/package/feeds/c526a_local" -maxdepth 5 -type f -name Makefile -print >&2 || true
-        grep -n -E 'c526a-wizard|luci-app-temp' tmp/.packageinfo tmp/.config-package.in 2>/dev/null | head -n 80 >&2 || true
-        exit 1
-    fi
-done
+if ! grep -q '^Package: luci-app-temp$' tmp/.packageinfo 2>/dev/null; then
+    echo "ERROR: OpenWrt did not index local temperature package luci-app-temp after make defconfig" >&2
+    echo "Temperature package directory: $TEMP_PACKAGE_DIR" >&2
+    find "$SOURCE_DIR/package/feeds/c526a_local" -maxdepth 5 -type f -name Makefile -print >&2 || true
+    grep -n -E 'Package: luci-app-temp|luci-app-temp' tmp/.packageinfo tmp/.config-package.in 2>/dev/null | head -n 80 >&2 || true
+    exit 1
+fi
 # These kernel modules must be part of this exact custom kernel build. Never rely on
 # installing kmods from a public feed later, because kernel ABI hashes may differ.
 for symbol in \
-    CONFIG_PACKAGE_luci-app-c526a-wizard \
     CONFIG_PACKAGE_luci-app-temp \
     CONFIG_PACKAGE_luci-i18n-base-zh-cn \
     CONFIG_PACKAGE_luci-i18n-passwall-zh-cn \
@@ -244,15 +210,11 @@ for symbol in \
     CONFIG_PACKAGE_luci-theme-argon; do
     if ! grep -qx "${symbol}=y" .config; then
         echo "ERROR: make defconfig did not retain ${symbol}=y; check package discovery and dependencies" >&2
-        if [[ "$symbol" == "CONFIG_PACKAGE_luci-app-c526a-wizard" || "$symbol" == "CONFIG_PACKAGE_luci-app-temp" ]]; then
-            echo "---- local LuCI package Makefiles ----" >&2
-            find package/feeds/c526a_local -maxdepth 5 -name Makefile -print >&2 || true
-            echo "---- local package metadata matches ----" >&2
-            grep -n -E 'c526a-wizard|luci-app-temp' tmp/.packageinfo tmp/.config-package.in tmp/.packageauxvars 2>/dev/null | head -n 80 >&2 || true
-            echo "---- wizard Makefile ----" >&2
-            sed -n '1,100p' "$WIZARD_PACKAGE_DIR/Makefile" >&2 || true
-            echo "---- temperature widget Makefile ----" >&2
+        if [[ "$symbol" == "CONFIG_PACKAGE_luci-app-temp" ]]; then
+            echo "---- temperature package Makefile ----" >&2
             sed -n '1,100p' "$TEMP_PACKAGE_DIR/Makefile" >&2 || true
+            echo "---- package metadata matches ----" >&2
+            grep -n -E 'Package: luci-app-temp|luci-app-temp' tmp/.packageinfo tmp/.config-package.in 2>/dev/null | head -n 80 >&2 || true
         fi
         exit 1
     fi
@@ -279,7 +241,7 @@ if len(data) != 24300 or blob_sha != expected:
 print(f"Verified C526A board-2.bin: {len(data)} bytes, git blob SHA-1 {blob_sha}")
 PYBDF
 
-# Verify that the wizard package actually installed the overview widget and its RPC backend.
+# Verify that the C526A rootfs overlay supplied the overview widget and its RPC backend.
 ROOTFS_DIR="${BDF_IN_ROOT%/lib/firmware/ath10k/QCA4019/hw1.0/board-2.bin}"
 [[ -f "$ROOTFS_DIR/www/luci-static/resources/view/status/include/29_c526a_traffic.js" ]] || {
     echo "ERROR: overview traffic widget is missing from the image rootfs" >&2
@@ -305,7 +267,7 @@ FACTORY="$(find "$IMAGE_DIR" -maxdepth 1 -type f -name '*hiwifi_c526a*factory.ub
 SYSUPGRADE="$(find "$IMAGE_DIR" -maxdepth 1 -type f -name '*hiwifi_c526a*sysupgrade.bin' -print -quit)"
 [[ -n "$FACTORY" ]] || { echo "ERROR: factory.ubi for hiwifi_c526a was not generated" >&2; exit 1; }
 [[ -n "$SYSUPGRADE" ]] || { echo "ERROR: sysupgrade.bin for hiwifi_c526a was not generated" >&2; exit 1; }
-for pkg in luci-app-c526a-wizard luci-app-temp liquid-formula luci-app-liquid-formula luci-i18n-base-zh-cn luci-i18n-passwall-zh-cn; do
+for pkg in luci-app-temp liquid-formula luci-app-liquid-formula luci-i18n-base-zh-cn luci-i18n-passwall-zh-cn; do
     grep -qE "^${pkg}[[:space:]]" "$MANIFEST" || {
         echo "ERROR: expected package missing from firmware manifest: ${pkg}" >&2
         exit 1

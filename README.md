@@ -2,9 +2,9 @@
 
 本工具包面向极路由 X C526A（Qualcomm IPQ4019，`ipq40xx/generic`），基于 ImmortalWrt `v25.12.2` / Linux 6.12。它是用于 GitHub Actions 编译最终镜像的源码工具包；本地没有完成完整交叉编译，因此不能把它当成已编译固件。
 
-## v9 修复记录（本次构建错误）
+## v9 构建修复记录
 
-本版本将两个本地 LuCI 包（C526A 快速网络向导、温度显示组件）的后备安装位置统一修正为 OpenWrt 的标准 feed 包扫描路径：`package/feeds/c526a_local/<package>/`。先前直接复制到 `package/<package>/` 后，包没有进入 `tmp/.packageinfo`，导致 `make defconfig` 删除配置项。构建会同时验证两个包的元数据和 `.config`，并在发现失败时输出具体路径与诊断。
+GitHub Actions 曾连续报告向导的 Makefile 虽然存在，但 `luci-app-c526a-wizard` 未进入 `tmp/.packageinfo`，导致 `make defconfig` 删除对应配置项。该向导仅包含 LuCI JavaScript 页面、菜单/ACL JSON 与 shell RPC 后端，并不需要单独编译成软件包。本版彻底取消向导的软件包选择和 feed 索引依赖，改为通过 OpenWrt 标准 `files/` rootfs overlay 安装这些运行时文件，并在镜像生成后检查各文件确实存在且 RPC 后端可执行。温度组件 `luci-app-temp` 仍是单独的软件包，其元数据和 `.config` 会单独检查。
 
 ## v9 本次变更
 
@@ -59,7 +59,7 @@ LuCI「状态 → 概览」新增「实时网络速率（WAN）」区域，每 2
 
 ## Liquid Formula 中文快速指南
 
-完整说明随固件安装于 `/usr/share/doc/c526a/Liquid-Formula-使用说明.md`，工具包内也可直接查看 `docs/Liquid-Formula-使用说明.md`。简单流程：进入 **服务 → Liquid Formula → 订阅转换（Sing-box）**，填写订阅地址、设置访问密码、选择模板、启用并保存；刷新订阅并检查生成的 JSON；确认后更新输出文件。此程序不运行 sing-box 本身，需由兼容的 sing-box 运行时使用生成文件。FakeHTTP / FakeSIP 默认关闭，错误的 NFQUEUE 或 mark/mask 规则可能影响网络，请不要未经测试就启用。
+完整说明随固件安装于 `/usr/share/doc/c526a/Liquid-Formula-zh-CN.md`，工具包内也可直接查看 `docs/Liquid-Formula-zh-CN.md`。简单流程：进入 **服务 → Liquid Formula → 订阅转换（Sing-box）**，填写订阅地址、设置访问密码、选择模板、启用并保存；刷新订阅并检查生成的 JSON；确认后更新输出文件。此程序不运行 sing-box 本身，需由兼容的 sing-box 运行时使用生成文件。FakeHTTP / FakeSIP 默认关闭，错误的 NFQUEUE 或 mark/mask 规则可能影响网络，请不要未经测试就启用。
 
 ## 版本与构建检查
 
@@ -93,6 +93,6 @@ LuCI「状态 → 概览」新增「实时网络速率（WAN）」区域，每 2
 ## PassWall kernel-module dependencies
 
 The image config explicitly enables `kmod-nft-socket`, `kmod-nft-tproxy`, their `kmod-nf-socket` / `kmod-nf-tproxy` dependencies, plus `kmod-tun`, `kmod-inet-diag`, and `kmod-netlink-diag` for the selected PassWall cores. `scripts/build.sh` checks after `make defconfig` that these selections survive. Keep these kernel modules in the same image as the custom kernel; do not install kmods from a different build's feed, even if the displayed kernel version number looks identical, because kernel ABI hashes can differ.
-### 本地 LuCI 软件包识别修复（v9，版本号不变）
+### 向导的安装方式（v9，版本号不变）
 
-此前编译日志显示 `luci-app-c526a-wizard` 的 Makefile 文件存在，但 `tmp/.packageinfo` 中没有该包。这意味着只复制到 `package/<name>/` 不足以让该构建识别它。本版把快速设置向导和 `luci-app-temp` 温度组件都放到 `package/feeds/c526a_local/<package>/` 的标准扫描路径，并在 `make defconfig` 后逐一确认两者已进入软件包元数据。向导 Makefile 也明确设置了 `PKG_NAME:=luci-app-c526a-wizard`。如果仍有识别问题，构建会先输出诊断并退出，不会继续生成缺少温度组件或向导的镜像。
+为避免重复触发 OpenWrt 包索引问题，C526A 快速设置向导、访客 Wi-Fi 页面、概览 WAN 实时速率页面、rpcd 后端、LuCI 菜单和 ACL 已统一改为放入 `rootfs-overlay/`，由标准 rootfs `files/` 机制安装，不再定义或选择 `luci-app-c526a-wizard` 这个独立 APK 包。因此它不会出现在软件包 manifest 中，但其菜单、页面、ACL 与 RPC 文件必须通过构建后检查。温度组件 `luci-app-temp` 仍作为实际软件包构建，并在 `make defconfig` 后检查元数据和配置项。

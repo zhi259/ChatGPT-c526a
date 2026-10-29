@@ -1,0 +1,26 @@
+{
+  "luci-app-c526a-wizard": {
+    "description": "Grant access to the HiWiFi C526A setup, guest Wi-Fi and traffic status pages",
+    "read": {
+      "uci": [
+        "network",
+        "wireless",
+        "dhcp",
+        "firewall"
+      ],
+      "ubus": {
+        "luci.c526a_traffic": [
+          "getData"
+        ]
+      }
+    },
+    "write": {
+      "uci": [
+        "network",
+        "wireless",
+        "dhcp",
+        "firewall"
+      ]
+    }
+  }
+}
