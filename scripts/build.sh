@@ -22,15 +22,19 @@ else
     git -C "$TEMP_SRC" fetch --depth 1 origin main
     git -C "$TEMP_SRC" checkout -q FETCH_HEAD
 fi
-rm -rf "$SOURCE_DIR/package/luci-app-temp"
-mkdir -p "$SOURCE_DIR/package/luci-app-temp"
-git -C "$TEMP_SRC" archive --format=tar HEAD | tar -xf - -C "$SOURCE_DIR/package/luci-app-temp"
-python3 "$KIT_DIR/scripts/patch-temp-widget.py" "$SOURCE_DIR/package/luci-app-temp"
+# Stage it outside the OpenWrt source until feeds have been installed. A
+# custom package placed directly at package/<name>/ is not part of all standard
+# package scan lists; it will be copied to package/feeds/c526a_local below.
+TEMP_PACKAGE_SRC="$WORKSPACE/local-package-src/luci-app-temp"
+rm -rf "$TEMP_PACKAGE_SRC" "$SOURCE_DIR/package/luci-app-temp"
+mkdir -p "$TEMP_PACKAGE_SRC"
+git -C "$TEMP_SRC" archive --format=tar HEAD | tar -xf - -C "$TEMP_PACKAGE_SRC"
+python3 "$KIT_DIR/scripts/patch-temp-widget.py" "$TEMP_PACKAGE_SRC"
 printf 'TEMP_WIDGET_COMMIT=%s\n' "$(git -C "$TEMP_SRC" rev-parse HEAD)" >> "$WORKSPACE/source-info.txt"
 
-# Add the local C526A wizard through a dedicated feed. A direct package/ copy
-# was not indexed consistently by make defconfig on this build; the feed makes
-# the package visible through scripts/feeds and preserves its CONFIG_PACKAGE symbol.
+# Stage the C526A wizard for a local feed. If feeds indexing misses the package,
+# the robust fallback later installs it under package/feeds/c526a_local/, a path
+# that the build's package metadata scan recognizes.
 WIZARD_SRC="$KIT_DIR/package/luci-app-c526a-wizard"
 [[ -f "$WIZARD_SRC/Makefile" && -f "$WIZARD_SRC/htdocs/luci-static/resources/view/c526a/wizard.js" ]] || {
     echo "ERROR: local C526A network wizard package is incomplete" >&2
@@ -115,29 +119,48 @@ PYFEEDS
 ./scripts/feeds update c526a_local
 if ./scripts/feeds list -r c526a_local | awk '$1 == "luci-app-c526a-wizard" { found=1 } END { exit !found }'; then
     if ! ./scripts/feeds install -f -p c526a_local luci-app-c526a-wizard; then
-        echo "WARNING: feed install failed; will use local package/ fallback" >&2
+        echo "WARNING: feed install failed; will use package/feeds/c526a_local fallback" >&2
     fi
 else
-    echo "WARNING: luci-app-c526a-wizard is absent from c526a_local index; using local package/ fallback" >&2
+    echo "WARNING: luci-app-c526a-wizard is absent from c526a_local index; using package/feeds/c526a_local fallback" >&2
     ./scripts/feeds list -r c526a_local >&2 || true
 fi
 ./scripts/feeds install -a
 
-# Robust fallback: put the same package directly under package/ if the feed
-# did not create a working package link. This avoids depending on local-feed
-# index behavior while retaining a post-defconfig CONFIG_PACKAGE check.
-if [[ ! -f "$SOURCE_DIR/package/feeds/c526a_local/luci-app-c526a-wizard/Makefile" ]]; then
-    echo "NOTICE: installing C526A wizard through package/ fallback" >&2
-    rm -f "$SOURCE_DIR/package/feeds/c526a_local/luci-app-c526a-wizard"
-    rm -rf "$SOURCE_DIR/package/luci-app-c526a-wizard"
-    mkdir -p "$SOURCE_DIR/package/luci-app-c526a-wizard"
-    cp -a "$WIZARD_SRC/." "$SOURCE_DIR/package/luci-app-c526a-wizard/"
+# Robust fallback: install under package/feeds/<feed>/<package>, which is a
+# directory OpenWrt actually scans for package metadata. A package copied to
+# package/<name>/ is NOT reliably indexed by the build's package Makefiles and
+# was the reason make defconfig silently removed CONFIG_PACKAGE_luci-app-c526a-wizard.
+WIZARD_PACKAGE_DIR="$SOURCE_DIR/package/feeds/c526a_local/luci-app-c526a-wizard"
+# Remove the earlier incorrect fallback path if a reused workspace has it.
+rm -rf "$SOURCE_DIR/package/luci-app-c526a-wizard"
+if [[ ! -f "$WIZARD_PACKAGE_DIR/Makefile" || ! -f "$WIZARD_PACKAGE_DIR/htdocs/luci-static/resources/view/c526a/wizard.js" ]]; then
+    echo "NOTICE: installing C526A wizard into recognized package/feeds/c526a_local path" >&2
+    rm -rf "$WIZARD_PACKAGE_DIR"
+    mkdir -p "$(dirname "$WIZARD_PACKAGE_DIR")"
+    cp -a "$WIZARD_SRC" "$WIZARD_PACKAGE_DIR"
 fi
-if [[ ! -f "$SOURCE_DIR/package/feeds/c526a_local/luci-app-c526a-wizard/Makefile" && ! -f "$SOURCE_DIR/package/luci-app-c526a-wizard/Makefile" ]]; then
-    echo "ERROR: C526A wizard Makefile is missing both from feed install and package/ fallback" >&2
-    find "$WIZARD_SRC" -maxdepth 4 -type f -print >&2 || true
+if [[ ! -f "$WIZARD_PACKAGE_DIR/Makefile" || ! -f "$WIZARD_PACKAGE_DIR/htdocs/luci-static/resources/view/c526a/wizard.js" ]]; then
+    echo "ERROR: C526A wizard is still missing from the recognized package/feeds/c526a_local path" >&2
+    find "$WIZARD_SRC" -maxdepth 5 -type f -print >&2 || true
     exit 1
 fi
+# The temperature widget is also a local package, and must be placed in the same
+# recognized package/feeds scan path as the wizard (not package/luci-app-temp).
+TEMP_PACKAGE_DIR="$SOURCE_DIR/package/feeds/c526a_local/luci-app-temp"
+rm -rf "$SOURCE_DIR/package/luci-app-temp"
+if [[ ! -f "$TEMP_PACKAGE_DIR/Makefile" ]]; then
+    echo "NOTICE: installing temperature widget into recognized package/feeds/c526a_local path" >&2
+    rm -rf "$TEMP_PACKAGE_DIR"
+    mkdir -p "$(dirname "$TEMP_PACKAGE_DIR")"
+    cp -a "$TEMP_PACKAGE_SRC" "$TEMP_PACKAGE_DIR"
+fi
+if [[ ! -f "$TEMP_PACKAGE_DIR/Makefile" ]]; then
+    echo "ERROR: temperature widget Makefile missing from recognized package/feeds/c526a_local path" >&2
+    find "$TEMP_PACKAGE_SRC" -maxdepth 4 -type f -print >&2 || true
+    exit 1
+fi
+# Use the standard package/feeds scan path only; no package/<name> fallback.
 
 # Translate the Liquid Formula LuCI views before configuring/building packages.
 python3 "$KIT_DIR/scripts/patch-liquid-formula-zh.py" "$SOURCE_DIR/feeds/liquid_formula/luci-app-liquid-formula"
@@ -185,6 +208,16 @@ done
 bash "$KIT_DIR/scripts/apply-c526a.sh" "$SOURCE_DIR"
 cp "$KIT_DIR/.config" .config
 make defconfig
+for local_pkg in luci-app-c526a-wizard luci-app-temp; do
+    if ! grep -q "$local_pkg" tmp/.packageinfo 2>/dev/null; then
+        echo "ERROR: OpenWrt did not index local package '$local_pkg' after make defconfig" >&2
+        echo "Wizard package directory: $WIZARD_PACKAGE_DIR" >&2
+        echo "Temperature package directory: $TEMP_PACKAGE_DIR" >&2
+        find "$SOURCE_DIR/package/feeds/c526a_local" -maxdepth 5 -type f -name Makefile -print >&2 || true
+        grep -n -E 'c526a-wizard|luci-app-temp' tmp/.packageinfo tmp/.config-package.in 2>/dev/null | head -n 80 >&2 || true
+        exit 1
+    fi
+done
 # These kernel modules must be part of this exact custom kernel build. Never rely on
 # installing kmods from a public feed later, because kernel ABI hashes may differ.
 for symbol in \
@@ -211,11 +244,15 @@ for symbol in \
     CONFIG_PACKAGE_luci-theme-argon; do
     if ! grep -qx "${symbol}=y" .config; then
         echo "ERROR: make defconfig did not retain ${symbol}=y; check package discovery and dependencies" >&2
-        if [[ "$symbol" == "CONFIG_PACKAGE_luci-app-c526a-wizard" ]]; then
-            echo "---- C526A wizard Makefiles ----" >&2
-            find package -maxdepth 5 -path '*c526a-wizard*' -name Makefile -print >&2 || true
-            echo "---- package metadata matches ----" >&2
-            grep -n -i 'c526a-wizard' tmp/.packageinfo 2>/dev/null | head -n 30 >&2 || true
+        if [[ "$symbol" == "CONFIG_PACKAGE_luci-app-c526a-wizard" || "$symbol" == "CONFIG_PACKAGE_luci-app-temp" ]]; then
+            echo "---- local LuCI package Makefiles ----" >&2
+            find package/feeds/c526a_local -maxdepth 5 -name Makefile -print >&2 || true
+            echo "---- local package metadata matches ----" >&2
+            grep -n -E 'c526a-wizard|luci-app-temp' tmp/.packageinfo tmp/.config-package.in tmp/.packageauxvars 2>/dev/null | head -n 80 >&2 || true
+            echo "---- wizard Makefile ----" >&2
+            sed -n '1,100p' "$WIZARD_PACKAGE_DIR/Makefile" >&2 || true
+            echo "---- temperature widget Makefile ----" >&2
+            sed -n '1,100p' "$TEMP_PACKAGE_DIR/Makefile" >&2 || true
         fi
         exit 1
     fi

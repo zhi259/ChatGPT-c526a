@@ -2,6 +2,10 @@
 
 本工具包面向极路由 X C526A（Qualcomm IPQ4019，`ipq40xx/generic`），基于 ImmortalWrt `v25.12.2` / Linux 6.12。它是用于 GitHub Actions 编译最终镜像的源码工具包；本地没有完成完整交叉编译，因此不能把它当成已编译固件。
 
+## v9 修复记录（本次构建错误）
+
+本版本将两个本地 LuCI 包（C526A 快速网络向导、温度显示组件）的后备安装位置统一修正为 OpenWrt 的标准 feed 包扫描路径：`package/feeds/c526a_local/<package>/`。先前直接复制到 `package/<package>/` 后，包没有进入 `tmp/.packageinfo`，导致 `make defconfig` 删除配置项。构建会同时验证两个包的元数据和 `.config`，并在发现失败时输出具体路径与诊断。
+
 ## v9 本次变更
 
 - LuCI 状态 → 概览新增温度组件，自动发现 `hwmon` 传感器，显示 MT7615E 2.4 GHz 温度和两颗 QCA4019 5 GHz 温度。传感器名称按设备路径识别，不依赖 `hwmon0/1/2` 编号。
@@ -89,12 +93,6 @@ LuCI「状态 → 概览」新增「实时网络速率（WAN）」区域，每 2
 ## PassWall kernel-module dependencies
 
 The image config explicitly enables `kmod-nft-socket`, `kmod-nft-tproxy`, their `kmod-nf-socket` / `kmod-nf-tproxy` dependencies, plus `kmod-tun`, `kmod-inet-diag`, and `kmod-netlink-diag` for the selected PassWall cores. `scripts/build.sh` checks after `make defconfig` that these selections survive. Keep these kernel modules in the same image as the custom kernel; do not install kmods from a different build's feed, even if the displayed kernel version number looks identical, because kernel ABI hashes can differ.
-### 构建修复说明（v9，版本号不变）
+### 本地 LuCI 软件包识别修复（v9，版本号不变）
 
-本次修复本地向导未被 feed 安装的问题：脚本在更新全部 feeds 后重新索引 `c526a_local`，并尝试用 `scripts/feeds install -f -p c526a_local luci-app-c526a-wizard` 显式安装。如果 feed 索引仍遗漏该包，脚本会自动把同一份包放入 OpenWrt 源码的 `package/luci-app-c526a-wizard/` 后备位置，而不是在此前的 feed 检查处提前退出。随后仍会严格检查 `make defconfig` 是否保留 `CONFIG_PACKAGE_luci-app-c526a-wizard=y`；若没有保留，会输出包路径和 `.packageinfo` 诊断。
-
-
-
-### 本地向导 feed 索引修复（v9，版本号不变）
-
-如果曾遇到 `ERROR: local C526A wizard was not installed from feed c526a_local`，请使用本包最新版。`scripts/build.sh` 会在全部 feed 更新后重试本地 feed 安装；若索引仍没有该包，则自动从 `package/` 后备路径安装，并在 `make defconfig` 后严格验证选项是否保留。这样构建不会再因单一 feed 安装路径而过早停止；如果包本身仍未被 Kconfig 识别，会输出更具体的诊断信息。
+此前编译日志显示 `luci-app-c526a-wizard` 的 Makefile 文件存在，但 `tmp/.packageinfo` 中没有该包。这意味着只复制到 `package/<name>/` 不足以让该构建识别它。本版把快速设置向导和 `luci-app-temp` 温度组件都放到 `package/feeds/c526a_local/<package>/` 的标准扫描路径，并在 `make defconfig` 后逐一确认两者已进入软件包元数据。向导 Makefile 也明确设置了 `PKG_NAME:=luci-app-c526a-wizard`。如果仍有识别问题，构建会先输出诊断并退出，不会继续生成缺少温度组件或向导的镜像。
