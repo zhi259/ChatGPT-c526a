@@ -2,10 +2,21 @@
   "luci-app-c526a-wizard": {
     "description": "Grant access to the HiWiFi C526A network setup wizard",
     "read": {
-      "uci": [ "network", "wireless" ]
+      "uci": [
+        "network",
+        "wireless"
+      ],
+      "ubus": {
+        "luci.c526a_traffic": [
+          "getData"
+        ]
+      }
     },
     "write": {
-      "uci": [ "network", "wireless" ]
+      "uci": [
+        "network",
+        "wireless"
+      ]
     }
   }
 }

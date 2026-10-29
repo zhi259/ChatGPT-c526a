@@ -5,6 +5,7 @@
 ## v9 本次变更
 
 - LuCI 状态 → 概览新增温度组件，自动发现 `hwmon` 传感器，显示 MT7615E 2.4 GHz 温度和两颗 QCA4019 5 GHz 温度。传感器名称按设备路径识别，不依赖 `hwmon0/1/2` 编号。
+- LuCI 状态 → 概览新增 WAN 实时网络速率组件，每 2 秒读取 WAN 当前三层设备的收发字节计数，计算并显示实时下载/上传速率；支持 DHCP 与 PPPoE 接口名称变化，不依赖物理网卡固定命名。
 - 默认首次启动 LAN 地址改为 `192.168.5.1/24`，DHCP 默认池沿用 ImmortalWrt 默认值；用户已经自定义的非默认 LAN 地址不会被覆盖。
 - 首次启动安全补齐 LAN→WAN 转发和 WAN masquerading 设置，以避免路由器本机能上网、LAN 客户端却不能上网的常见配置问题。
 - 保留 Linux 6.12 DSA 的 `lan2`、`lan3`、`lan4` 与 `wan` 接口映射、MAC/校准数据处理、专用 QCA4019 BDF 校验和 NAND sysupgrade 支持。
@@ -19,6 +20,10 @@
 3. 等解压工作流完成后，打开 Actions，手动运行 **ImmortalWrt 25.12.2 - HiWiFi C526A v9 Final**。如果解压后的 `.config`、`files/`、`scripts/` 已提交，路径触发也会自动启动构建。
 4. 等 Actions 完成后下载 Artifact `immortalwrt-v25.12.2-hiwifi-c526a-v9-final`。成功的 Artifact 应包含 `factory.ubi`、`sysupgrade.bin`、`sha256sums` 和 `source-info.txt`。
 5. 首次刷机前备份原厂分区、ART 校准数据和配置；首次安装与系统内升级请使用正确的镜像格式。若要验证全新 LAN 默认配置，升级时不要保留旧设置。
+
+## 概览页实时网络速率
+
+LuCI「状态 → 概览」新增「实时网络速率（WAN）」区域，每 2 秒刷新一次，显示 WAN 下载/上传速度。组件通过 rpcd 后端读取当前 WAN 逻辑接口的三层设备（`l3_device`）收发字节计数，再根据相邻两次采样的差值计算速度；因此可适配 DHCP 与 PPPoE 使用不同接口名的情况。首次进入页面时需要经过一次采样，速率数值才会出现。如果 WAN 设备状态不可读取，会显示提示而不是伪造流量。速率单位使用 B/s、KiB/s、MiB/s 或 GiB/s；此显示为 WAN 接口统计，不是逐客户端流量统计。
 
 ## 快速网络设置向导
 
@@ -47,7 +52,7 @@
 
 - C526A 专用 QCA4019 BDF 必须为 24,300 字节，且 Git blob SHA-1 为 `ce91af5b144d1238ca4eb35dcfdf34c537f9cc7a`；不一致即让构建失败。
 - v25.12.2 的 PassWall Xray-core 固定为 `26.7.28`，SHA-256 为 `a9afe86349c7bd3e6cae60125e62a5ada09d102e1a2760623e77c24a84dbfb46`，以兼容当期 Go 1.26.x 工具链。
-- 最终构建会检查关键包出现在固件 manifest，并要求同时生成 `factory.ubi` 和 `sysupgrade.bin`。
+- 最终构建会检查关键包出现在固件 manifest，并要求同时生成 `factory.ubi` 和 `sysupgrade.bin`；编译完成后还会检查实时流量组件的前端文件和可执行 RPC 后端确实存在于镜像 rootfs。
 
 ## 上游依据
 
@@ -75,3 +80,7 @@
 ## PassWall kernel-module dependencies
 
 The image config explicitly enables `kmod-nft-socket`, `kmod-nft-tproxy`, their `kmod-nf-socket` / `kmod-nf-tproxy` dependencies, plus `kmod-tun`, `kmod-inet-diag`, and `kmod-netlink-diag` for the selected PassWall cores. `scripts/build.sh` checks after `make defconfig` that these selections survive. Keep these kernel modules in the same image as the custom kernel; do not install kmods from a different build's feed, even if the displayed kernel version number looks identical, because kernel ABI hashes can differ.
+### 构建修复说明（v9，版本号不变）
+
+本次打包修复 `make defconfig did not retain CONFIG_PACKAGE_luci-app-c526a-wizard=y`：快速设置向导通过独立的 `c526a_local` 本地 feed 注册，运行 `scripts/feeds install -a` 后才执行 `make defconfig`，并在构建前确认 feed 软链接存在。若该检查失败，构建会提前报错，而不是生成缺少向导的镜像。
+

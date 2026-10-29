@@ -28,15 +28,18 @@ git -C "$TEMP_SRC" archive --format=tar HEAD | tar -xf - -C "$SOURCE_DIR/package
 python3 "$KIT_DIR/scripts/patch-temp-widget.py" "$SOURCE_DIR/package/luci-app-temp"
 printf 'TEMP_WIDGET_COMMIT=%s\n' "$(git -C "$TEMP_SRC" rev-parse HEAD)" >> "$WORKSPACE/source-info.txt"
 
-# Install the local C526A first-run network wizard as a build-tree package.
+# Add the local C526A wizard through a dedicated feed. A direct package/ copy
+# was not indexed consistently by make defconfig on this build; the feed makes
+# the package visible through scripts/feeds and preserves its CONFIG_PACKAGE symbol.
 WIZARD_SRC="$KIT_DIR/package/luci-app-c526a-wizard"
 [[ -f "$WIZARD_SRC/Makefile" && -f "$WIZARD_SRC/htdocs/luci-static/resources/view/c526a/wizard.js" ]] || {
     echo "ERROR: local C526A network wizard package is incomplete" >&2
     exit 1
 }
-rm -rf "$SOURCE_DIR/package/luci-app-c526a-wizard"
-mkdir -p "$SOURCE_DIR/package/luci-app-c526a-wizard"
-cp -a "$WIZARD_SRC/." "$SOURCE_DIR/package/luci-app-c526a-wizard/"
+WIZARD_FEED="$WORKSPACE/c526a-local-feed"
+rm -rf "$WIZARD_FEED"
+mkdir -p "$WIZARD_FEED/luci-app-c526a-wizard"
+cp -a "$WIZARD_SRC/." "$WIZARD_FEED/luci-app-c526a-wizard/"
 
 # Apply the rootfs overlay for first-boot LAN defaults and the Liquid Formula guide.
 if [[ -d "$KIT_DIR/rootfs-overlay" ]]; then
@@ -79,18 +82,20 @@ mkdir -p "$ARGON_FEED/luci-theme-argon"
 git -C "$ARGON_SRC" archive --format=tar v3.1.0 | tar -xf - -C "$ARGON_FEED/luci-theme-argon"
 printf 'ARGON_COMMIT=%s\n' "$(git -C "$ARGON_SRC" rev-parse v3.1.0)" >> "$WORKSPACE/source-info.txt"
 
-python3 - "$WORKSPACE/SingBox-Formula/openwrt-feed" "$ARGON_FEED" <<'PYFEEDS'
+python3 - "$WORKSPACE/SingBox-Formula/openwrt-feed" "$ARGON_FEED" "$WIZARD_FEED" <<'PYFEEDS'
 from pathlib import Path
 import sys
 feed_file = Path("feeds.conf.default")
 liquid_source = Path(sys.argv[1]).resolve()
 argon_source = Path(sys.argv[2]).resolve()
+wizard_source = Path(sys.argv[3]).resolve()
 if not feed_file.exists():
     raise SystemExit("ERROR: feeds.conf.default not found")
 existing = feed_file.read_text().splitlines()
 required = [
     "src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git;main",
     "src-git passwall_luci https://github.com/Openwrt-Passwall/openwrt-passwall.git;main",
+    f"src-link c526a_local {wizard_source}",
     f"src-link argon {argon_source}",
     f"src-link liquid_formula {liquid_source}",
 ]
@@ -103,6 +108,13 @@ PYFEEDS
 
 ./scripts/feeds update -a
 ./scripts/feeds install -a
+
+# Ensure the local feed registered the wizard package before running defconfig.
+if [[ ! -d "$SOURCE_DIR/package/feeds/c526a_local/luci-app-c526a-wizard" ]]; then
+    echo "ERROR: local C526A wizard was not installed from feed c526a_local" >&2
+    find "$SOURCE_DIR/package/feeds" -maxdepth 3 -iname '*c526a*wizard*' -print >&2 || true
+    exit 1
+fi
 
 # Translate the Liquid Formula LuCI views before configuring/building packages.
 python3 "$KIT_DIR/scripts/patch-liquid-formula-zh.py" "$SOURCE_DIR/feeds/liquid_formula/luci-app-liquid-formula"
@@ -200,6 +212,17 @@ if len(data) != 24300 or blob_sha != expected:
     raise SystemExit(f"ERROR: wrong C526A board-2.bin: bytes={len(data)} git_blob_sha1={blob_sha}")
 print(f"Verified C526A board-2.bin: {len(data)} bytes, git blob SHA-1 {blob_sha}")
 PYBDF
+
+# Verify that the wizard package actually installed the overview widget and its RPC backend.
+ROOTFS_DIR="${BDF_IN_ROOT%/lib/firmware/ath10k/QCA4019/hw1.0/board-2.bin}"
+[[ -f "$ROOTFS_DIR/www/luci-static/resources/view/status/include/29_c526a_traffic.js" ]] || {
+    echo "ERROR: overview traffic widget is missing from the image rootfs" >&2
+    exit 1
+}
+[[ -x "$ROOTFS_DIR/usr/libexec/rpcd/luci.c526a_traffic" ]] || {
+    echo "ERROR: WAN traffic RPC backend is missing or not executable in the image rootfs" >&2
+    exit 1
+}
 
 IMAGE_DIR="bin/targets/ipq40xx/generic"
 MANIFEST="$(find "$IMAGE_DIR" -maxdepth 1 -type f -name '*.manifest' -print -quit)"

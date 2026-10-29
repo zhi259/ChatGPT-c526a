@@ -1,0 +1,58 @@
+#!/bin/sh
+# Read WAN interface byte counters for the C526A LuCI overview widget.
+. "${C526A_JSHN_LIB:-/usr/share/libubox/jshn.sh}"
+
+get_data() {
+	# Use the logical WAN L3 device so DHCP and PPPoE both report real counters.
+	status="$(ubus call network.interface.wan status '{}' 2>/dev/null || true)"
+	dev="$(printf '%s\n' "$status" | jsonfilter -e '@.l3_device' 2>/dev/null | head -n 1)"
+	[ -n "$dev" ] || dev="$(printf '%s\n' "$status" | jsonfilter -e '@.device' 2>/dev/null | head -n 1)"
+	[ -n "$dev" ] || dev="$(uci -q get network.wan.device 2>/dev/null)"
+
+	# Only accept Linux interface-name characters before using the value as a path.
+	case "$dev" in
+		''|*[!A-Za-z0-9_.:-]*) dev="" ;;
+	esac
+
+	SYSFS_ROOT="${C526A_SYSFS_ROOT:-/sys}"
+	if [ -n "$dev" ] && [ -r "$SYSFS_ROOT/class/net/$dev/statistics/rx_bytes" ] && [ -r "$SYSFS_ROOT/class/net/$dev/statistics/tx_bytes" ]; then
+		rx="$(cat "$SYSFS_ROOT/class/net/$dev/statistics/rx_bytes" 2>/dev/null)"
+		tx="$(cat "$SYSFS_ROOT/class/net/$dev/statistics/tx_bytes" 2>/dev/null)"
+		case "$rx:$tx" in
+			*[!0-9:]*) rx=""; tx="" ;;
+		esac
+		if [ -n "$rx" ] && [ -n "$tx" ]; then
+			json_init
+			json_add_boolean available 1
+			json_add_string device "$dev"
+			json_add_int rx_bytes "$rx"
+			json_add_int tx_bytes "$tx"
+			json_dump
+			return
+		fi
+	fi
+
+	json_init
+	json_add_boolean available 0
+	json_add_string device ""
+	json_add_int rx_bytes 0
+	json_add_int tx_bytes 0
+	json_dump
+}
+
+case "$1" in
+	list)
+		echo '{ "getData": {} }'
+		;;
+	call)
+		case "$2" in
+			getData)
+				read -r _input 2>/dev/null || true
+				get_data
+				;;
+			*)
+				echo '{}'
+				;;
+		esac
+		;;
+esac
