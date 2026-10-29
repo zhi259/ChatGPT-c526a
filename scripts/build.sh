@@ -107,12 +107,35 @@ print("Configured PassWall, Argon 3.1.0 and Liquid Formula feeds")
 PYFEEDS
 
 ./scripts/feeds update -a
+
+# Rebuild the local feed index after all feeds are available. If the custom
+# feed index still omits this LuCI app, fall back to OpenWrt's normal local
+# package/ directory instead of aborting before defconfig. The final config
+# assertion below remains strict, so the image cannot silently omit the app.
+./scripts/feeds update c526a_local
+if ./scripts/feeds list -r c526a_local | awk '$1 == "luci-app-c526a-wizard" { found=1 } END { exit !found }'; then
+    if ! ./scripts/feeds install -f -p c526a_local luci-app-c526a-wizard; then
+        echo "WARNING: feed install failed; will use local package/ fallback" >&2
+    fi
+else
+    echo "WARNING: luci-app-c526a-wizard is absent from c526a_local index; using local package/ fallback" >&2
+    ./scripts/feeds list -r c526a_local >&2 || true
+fi
 ./scripts/feeds install -a
 
-# Ensure the local feed registered the wizard package before running defconfig.
-if [[ ! -d "$SOURCE_DIR/package/feeds/c526a_local/luci-app-c526a-wizard" ]]; then
-    echo "ERROR: local C526A wizard was not installed from feed c526a_local" >&2
-    find "$SOURCE_DIR/package/feeds" -maxdepth 3 -iname '*c526a*wizard*' -print >&2 || true
+# Robust fallback: put the same package directly under package/ if the feed
+# did not create a working package link. This avoids depending on local-feed
+# index behavior while retaining a post-defconfig CONFIG_PACKAGE check.
+if [[ ! -f "$SOURCE_DIR/package/feeds/c526a_local/luci-app-c526a-wizard/Makefile" ]]; then
+    echo "NOTICE: installing C526A wizard through package/ fallback" >&2
+    rm -f "$SOURCE_DIR/package/feeds/c526a_local/luci-app-c526a-wizard"
+    rm -rf "$SOURCE_DIR/package/luci-app-c526a-wizard"
+    mkdir -p "$SOURCE_DIR/package/luci-app-c526a-wizard"
+    cp -a "$WIZARD_SRC/." "$SOURCE_DIR/package/luci-app-c526a-wizard/"
+fi
+if [[ ! -f "$SOURCE_DIR/package/feeds/c526a_local/luci-app-c526a-wizard/Makefile" && ! -f "$SOURCE_DIR/package/luci-app-c526a-wizard/Makefile" ]]; then
+    echo "ERROR: C526A wizard Makefile is missing both from feed install and package/ fallback" >&2
+    find "$WIZARD_SRC" -maxdepth 4 -type f -print >&2 || true
     exit 1
 fi
 
@@ -187,7 +210,13 @@ for symbol in \
     CONFIG_PACKAGE_luci-app-liquid-formula \
     CONFIG_PACKAGE_luci-theme-argon; do
     if ! grep -qx "${symbol}=y" .config; then
-        echo "ERROR: make defconfig did not retain ${symbol}=y; check its feed/package dependencies" >&2
+        echo "ERROR: make defconfig did not retain ${symbol}=y; check package discovery and dependencies" >&2
+        if [[ "$symbol" == "CONFIG_PACKAGE_luci-app-c526a-wizard" ]]; then
+            echo "---- C526A wizard Makefiles ----" >&2
+            find package -maxdepth 5 -path '*c526a-wizard*' -name Makefile -print >&2 || true
+            echo "---- package metadata matches ----" >&2
+            grep -n -i 'c526a-wizard' tmp/.packageinfo 2>/dev/null | head -n 30 >&2 || true
+        fi
         exit 1
     fi
 done
@@ -221,6 +250,14 @@ ROOTFS_DIR="${BDF_IN_ROOT%/lib/firmware/ath10k/QCA4019/hw1.0/board-2.bin}"
 }
 [[ -x "$ROOTFS_DIR/usr/libexec/rpcd/luci.c526a_traffic" ]] || {
     echo "ERROR: WAN traffic RPC backend is missing or not executable in the image rootfs" >&2
+    exit 1
+}
+[[ -f "$ROOTFS_DIR/www/luci-static/resources/view/c526a/guestwifi.js" ]] || {
+    echo "ERROR: C526A guest Wi-Fi LuCI page is missing from the image rootfs" >&2
+    exit 1
+}
+[[ -f "$ROOTFS_DIR/usr/share/luci/menu.d/luci-app-c526a-wizard.json" ]] || {
+    echo "ERROR: C526A LuCI menu definition is missing from the image rootfs" >&2
     exit 1
 }
 

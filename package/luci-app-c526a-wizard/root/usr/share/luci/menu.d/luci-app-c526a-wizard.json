@@ -7,7 +7,22 @@
       "path": "c526a/wizard"
     },
     "depends": {
-      "acl": [ "luci-app-c526a-wizard" ]
+      "acl": [
+        "luci-app-c526a-wizard"
+      ]
+    }
+  },
+  "admin/network/c526a-guestwifi": {
+    "title": "C526A 访客 Wi-Fi",
+    "order": 6,
+    "action": {
+      "type": "view",
+      "path": "c526a/guestwifi"
+    },
+    "depends": {
+      "acl": [
+        "luci-app-c526a-wizard"
+      ]
     }
   }
 }

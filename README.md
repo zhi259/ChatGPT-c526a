@@ -11,6 +11,7 @@
 - 保留 Linux 6.12 DSA 的 `lan2`、`lan3`、`lan4` 与 `wan` 接口映射、MAC/校准数据处理、专用 QCA4019 BDF 校验和 NAND sysupgrade 支持。
 - Liquid Formula LuCI 界面增加常用标签的简体中文替换，并附带《Liquid Formula 使用说明》安装到 `/usr/share/doc/c526a/`。上游未覆盖到的新增提示文字仍可能保留英文。
 - 新增中文「网络 → C526A 快速设置向导」：可一次配置 WAN（DHCP/PPPoE/静态 IPv4）、LAN 管理地址和 2.4/5 GHz Wi-Fi；应用前校验输入并提示 LAN 地址变化会断开当前会话。
+- 新增中文「网络 → C526A 访客 Wi-Fi」：可分别在 2.4 GHz 与两颗 5 GHz 无线模块启用访客 SSID，自动配置独立的 `guest` IPv4 子网、DHCP、访客防火墙区与仅 `guest → wan` 转发；默认拒绝访客访问路由器管理服务及主 LAN，并开启无线客户端隔离。
 - 维持 PassWall（nftables）配置、Go 1.26 可构建的 Xray-core 版本固定、Argon 主题及简体中文语言包，并增加构建后关键软件包清单检查。
 
 ## 使用方式
@@ -36,6 +37,14 @@ LuCI「状态 → 概览」新增「实时网络速率（WAN）」区域，每 2
 
 向导是手动进入的配置页面，不会在每次启动时强制弹出；它仅配置 C526A 固件现有的 `wan`、`lan` 与三组无线 UCI 配置，不提供 Asus 原厂固件的所有诊断与自动探测功能。
 
+## 访客 Wi-Fi
+
+进入 LuCI「网络 → C526A 访客 Wi-Fi」，启用访客无线网络后，设置 SSID、WPA2 密码并选择要广播的无线模块。首次启用时必须输入 8–63 位可打印 ASCII 密码；后续如果不修改密码，密码框可以留空。
+
+默认访客网关是 `192.168.6.1/24`，DHCP 地址池为 `192.168.6.100–192.168.6.249`。如果主 LAN 或上级网络也使用 `192.168.6.0/24`，请先改访客网关为其他不冲突网段。应用时会创建或更新空桥 `br-guest`、DHCP 与防火墙配置：访客侧默认 `input=REJECT`、`forward=REJECT`，只放行 IPv4 DNS/DHCP 到路由器，并允许访客转发到 WAN；不会创建访客到 LAN 的转发。无线客户端隔离同时开启。
+
+关闭「启用访客 Wi-Fi」会关闭三个访客 SSID 的广播并停用访客 DHCP 服务；访客接口和防火墙规则会保留，方便以后重新启用。该功能的安全性依赖实际生成的防火墙规则，构建成功后仍建议用访客设备验证其无法访问 `192.168.5.1` 与其他 LAN 设备，但能正常获取地址、解析 DNS 和访问互联网。
+
 ## 网络与默认地址
 
 - LAN：`lan2`、`lan3`、`lan4`；WAN：`wan`。请实机逐一插拔网线确认机壳端口对应关系。
@@ -52,7 +61,7 @@ LuCI「状态 → 概览」新增「实时网络速率（WAN）」区域，每 2
 
 - C526A 专用 QCA4019 BDF 必须为 24,300 字节，且 Git blob SHA-1 为 `ce91af5b144d1238ca4eb35dcfdf34c537f9cc7a`；不一致即让构建失败。
 - v25.12.2 的 PassWall Xray-core 固定为 `26.7.28`，SHA-256 为 `a9afe86349c7bd3e6cae60125e62a5ada09d102e1a2760623e77c24a84dbfb46`，以兼容当期 Go 1.26.x 工具链。
-- 最终构建会检查关键包出现在固件 manifest，并要求同时生成 `factory.ubi` 和 `sysupgrade.bin`；编译完成后还会检查实时流量组件的前端文件和可执行 RPC 后端确实存在于镜像 rootfs。
+- 最终构建会检查关键包出现在固件 manifest，并要求同时生成 `factory.ubi` 和 `sysupgrade.bin`；编译完成后还会检查实时流量组件的前端文件、可执行 RPC 后端以及访客 Wi-Fi 页面确实存在于镜像 rootfs。
 
 ## 上游依据
 
@@ -82,5 +91,10 @@ LuCI「状态 → 概览」新增「实时网络速率（WAN）」区域，每 2
 The image config explicitly enables `kmod-nft-socket`, `kmod-nft-tproxy`, their `kmod-nf-socket` / `kmod-nf-tproxy` dependencies, plus `kmod-tun`, `kmod-inet-diag`, and `kmod-netlink-diag` for the selected PassWall cores. `scripts/build.sh` checks after `make defconfig` that these selections survive. Keep these kernel modules in the same image as the custom kernel; do not install kmods from a different build's feed, even if the displayed kernel version number looks identical, because kernel ABI hashes can differ.
 ### 构建修复说明（v9，版本号不变）
 
-本次打包修复 `make defconfig did not retain CONFIG_PACKAGE_luci-app-c526a-wizard=y`：快速设置向导通过独立的 `c526a_local` 本地 feed 注册，运行 `scripts/feeds install -a` 后才执行 `make defconfig`，并在构建前确认 feed 软链接存在。若该检查失败，构建会提前报错，而不是生成缺少向导的镜像。
+本次修复本地向导未被 feed 安装的问题：脚本在更新全部 feeds 后重新索引 `c526a_local`，并尝试用 `scripts/feeds install -f -p c526a_local luci-app-c526a-wizard` 显式安装。如果 feed 索引仍遗漏该包，脚本会自动把同一份包放入 OpenWrt 源码的 `package/luci-app-c526a-wizard/` 后备位置，而不是在此前的 feed 检查处提前退出。随后仍会严格检查 `make defconfig` 是否保留 `CONFIG_PACKAGE_luci-app-c526a-wizard=y`；若没有保留，会输出包路径和 `.packageinfo` 诊断。
 
+
+
+### 本地向导 feed 索引修复（v9，版本号不变）
+
+如果曾遇到 `ERROR: local C526A wizard was not installed from feed c526a_local`，请使用本包最新版。`scripts/build.sh` 会在全部 feed 更新后重试本地 feed 安装；若索引仍没有该包，则自动从 `package/` 后备路径安装，并在 `make defconfig` 后严格验证选项是否保留。这样构建不会再因单一 feed 安装路径而过早停止；如果包本身仍未被 Kconfig 识别，会输出更具体的诊断信息。
