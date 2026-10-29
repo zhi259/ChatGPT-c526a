@@ -38,6 +38,10 @@ C526A DTS 为两组 QCA4019 射频声明 `qcom,ath10k-calibration-variant = "C52
 
 v4 修复 `package/firmware/ipq-wifi/Makefile` 的 `Build/Prepare`，在默认解包/打补丁后将本地 `board-hiwifi_c526a.qca4019` 复制到 `$(PKG_BUILD_DIR)`，供 `install-overlay` 的 `wildcard board-hiwifi_c526a.*` 匹配。设备仍排除通用 `ath10k-board-qca4019`，并保留专用 `ipq-wifi-hiwifi_c526a` 和标准（非 CT）ath10k 固件。构建结束时新增检查：若根文件系统缺少 `board-2.bin`、大小不是 24,300 字节或 Git blob SHA-1 与原始文件不符，构建将失败，而不是再次产出两组 QCA4019 都无法启动的固件。
 
+## Go 工具链兼容性
+
+ImmortalWrt v25.12.2 当前 packages feed 使用 Go 1.26.x，而 PassWall feed 跟随上游时可能带入要求 Go 1.27 的 Xray-core。构建脚本会在 feeds 安装后将 `feeds/passwall_packages/xray-core/Makefile` 固定到 Xray-core v26.7.28，并设置对应的源码 SHA-256；该版本的 `go.mod` 声明 `go 1.26`。若以后 Go 工具链升级到 1.27 或更新，请重新评估并移除此兼容性固定。
+
 ## 重要风险提醒
 
 - 原始支持说明明确指出此布局不支持 pbboot，且 UBI 占用 NAND 全部 128 MiB。刷写前应确认设备有可用的串口/救砖方式，并备份原厂分区与校准数据；选错设备镜像可能导致变砖。

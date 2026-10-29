@@ -69,6 +69,34 @@ PYFEEDS
 ./scripts/feeds update -a
 ./scripts/feeds install -a
 
+# ImmortalWrt 25.12.2's packages feed builds Go 1.26.8. Xray-core >= 26.9.8
+# requires Go 1.27, so pin PassWall's xray-core recipe to v26.7.28 (go 1.26)
+# rather than mutating go.mod or trying to let GOTOOLCHAIN download a toolchain.
+XRAY_MAKEFILE="$SOURCE_DIR/feeds/passwall_packages/xray-core/Makefile"
+python3 - "$XRAY_MAKEFILE" <<'PYXRAY'
+from pathlib import Path
+import re, sys
+p = Path(sys.argv[1])
+if not p.is_file():
+    raise SystemExit(f"ERROR: PassWall xray-core Makefile not found: {p}")
+s = p.read_text()
+if not re.search(r"(?m)^\s*PKG_NAME\s*:=\s*xray-core\s*$", s):
+    raise SystemExit("ERROR: unexpected xray-core Makefile; refusing to patch unknown package")
+if "github.com/XTLS/Xray-core" not in s and "github.com/xtls/Xray-core" not in s and "codeload.github.com/XTLS/Xray-core" not in s:
+    raise SystemExit("ERROR: xray-core source URL was not recognized; refusing to patch")
+for key, value in (
+    ("PKG_VERSION", "26.7.28"),
+    ("PKG_HASH", "a9afe86349c7bd3e6cae60125e62a5ada09d102e1a2760623e77c24a84dbfb46"),
+):
+    pattern = rf"(?m)^\s*{key}\s*:=.*$"
+    matches = list(re.finditer(pattern, s))
+    if len(matches) != 1:
+        raise SystemExit(f"ERROR: expected one {key} line in {p}, found {len(matches)}")
+    s = re.sub(pattern, f"{key}:={value}", s, count=1, flags=re.M)
+p.write_text(s)
+print("Pinned PassWall xray-core to v26.7.28 (go.mod: go 1.26) for the Go 1.26.8 toolchain")
+PYXRAY
+
 # Fail early if any requested application feed was not installed.
 for pkgdir in \
     feeds/passwall_luci/luci-app-passwall \
