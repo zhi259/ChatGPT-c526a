@@ -80,7 +80,7 @@ p = Path(sys.argv[1])
 if not p.is_file():
     raise SystemExit(f"ERROR: PassWall xray-core Makefile not found: {p}")
 s = p.read_text()
-if not re.search(r"(?m)^\s*PKG_NAME\s*:=\s*xray-core\s*$", s):
+if not re.search(r"(?m)^\s*PKG_NAME\s*:=\s*xray-core\s*$", s, re.IGNORECASE):
     raise SystemExit("ERROR: unexpected xray-core Makefile; refusing to patch unknown package")
 if "github.com/XTLS/Xray-core" not in s and "github.com/xtls/Xray-core" not in s and "codeload.github.com/XTLS/Xray-core" not in s:
     raise SystemExit("ERROR: xray-core source URL was not recognized; refusing to patch")
