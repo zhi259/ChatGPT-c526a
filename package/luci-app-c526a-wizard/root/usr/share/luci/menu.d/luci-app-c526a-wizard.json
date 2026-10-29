@@ -1,0 +1,13 @@
+{
+  "admin/network/c526a-wizard": {
+    "title": "C526A 快速设置向导",
+    "order": 5,
+    "action": {
+      "type": "view",
+      "path": "c526a/wizard"
+    },
+    "depends": {
+      "acl": [ "luci-app-c526a-wizard" ]
+    }
+  }
+}

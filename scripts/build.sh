@@ -5,11 +5,44 @@ KIT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE="${GITHUB_WORKSPACE:-$(cd "$KIT_DIR/.." && pwd)}"
 SOURCE_DIR="${SOURCE_DIR:-$WORKSPACE/immortalwrt}"
 
+: > "$WORKSPACE/source-info.txt"
 if [[ ! -d "$SOURCE_DIR/.git" ]]; then
 	git clone --depth 1 --branch v25.12.2 https://github.com/immortalwrt/immortalwrt.git "$SOURCE_DIR"
 fi
 
 cd "$SOURCE_DIR"
+printf 'IMMORTALWRT_TAG=v25.12.2\nIMMORTALWRT_COMMIT=%s\n' "$(git rev-parse HEAD)" >> "$WORKSPACE/source-info.txt"
+
+# Add the OpenWrt 25.x temperature widget as a local source package. The source
+# revision is recorded so a successful build is reproducible/auditable.
+TEMP_SRC="$WORKSPACE/luci-app-temp-src"
+if [[ ! -d "$TEMP_SRC/.git" ]]; then
+    git clone --depth 1 https://github.com/ramanarupa/luci-app-temp.git "$TEMP_SRC"
+else
+    git -C "$TEMP_SRC" fetch --depth 1 origin main
+    git -C "$TEMP_SRC" checkout -q FETCH_HEAD
+fi
+rm -rf "$SOURCE_DIR/package/luci-app-temp"
+mkdir -p "$SOURCE_DIR/package/luci-app-temp"
+git -C "$TEMP_SRC" archive --format=tar HEAD | tar -xf - -C "$SOURCE_DIR/package/luci-app-temp"
+python3 "$KIT_DIR/scripts/patch-temp-widget.py" "$SOURCE_DIR/package/luci-app-temp"
+printf 'TEMP_WIDGET_COMMIT=%s\n' "$(git -C "$TEMP_SRC" rev-parse HEAD)" >> "$WORKSPACE/source-info.txt"
+
+# Install the local C526A first-run network wizard as a build-tree package.
+WIZARD_SRC="$KIT_DIR/package/luci-app-c526a-wizard"
+[[ -f "$WIZARD_SRC/Makefile" && -f "$WIZARD_SRC/htdocs/luci-static/resources/view/c526a/wizard.js" ]] || {
+    echo "ERROR: local C526A network wizard package is incomplete" >&2
+    exit 1
+}
+rm -rf "$SOURCE_DIR/package/luci-app-c526a-wizard"
+mkdir -p "$SOURCE_DIR/package/luci-app-c526a-wizard"
+cp -a "$WIZARD_SRC/." "$SOURCE_DIR/package/luci-app-c526a-wizard/"
+
+# Apply the rootfs overlay for first-boot LAN defaults and the Liquid Formula guide.
+if [[ -d "$KIT_DIR/rootfs-overlay" ]]; then
+    mkdir -p "$SOURCE_DIR/files"
+    cp -a "$KIT_DIR/rootfs-overlay/." "$SOURCE_DIR/files/"
+fi
 
 # Add feeds required by this .config BEFORE running feeds update/install.
 # PassWall's upstream README recommends placing its feeds before stock feeds
@@ -29,6 +62,7 @@ fi
     echo "ERROR: Liquid Formula LuCI feed is missing" >&2
     exit 1
 }
+printf 'LIQUID_FORMULA_COMMIT=%s\n' "$(git -C "$LIQUID_SRC" rev-parse HEAD)" >> "$WORKSPACE/source-info.txt"
 
 # Argon 3.1.0 is a standalone package repository, so wrap it as a one-package
 # feed instead of pointing feeds.conf.default directly at a package root.
@@ -43,6 +77,7 @@ fi
 rm -rf "$ARGON_FEED"
 mkdir -p "$ARGON_FEED/luci-theme-argon"
 git -C "$ARGON_SRC" archive --format=tar v3.1.0 | tar -xf - -C "$ARGON_FEED/luci-theme-argon"
+printf 'ARGON_COMMIT=%s\n' "$(git -C "$ARGON_SRC" rev-parse v3.1.0)" >> "$WORKSPACE/source-info.txt"
 
 python3 - "$WORKSPACE/SingBox-Formula/openwrt-feed" "$ARGON_FEED" <<'PYFEEDS'
 from pathlib import Path
@@ -68,6 +103,9 @@ PYFEEDS
 
 ./scripts/feeds update -a
 ./scripts/feeds install -a
+
+# Translate the Liquid Formula LuCI views before configuring/building packages.
+python3 "$KIT_DIR/scripts/patch-liquid-formula-zh.py" "$SOURCE_DIR/feeds/liquid_formula/luci-app-liquid-formula"
 
 # ImmortalWrt 25.12.2's packages feed builds Go 1.26.8. Xray-core >= 26.9.8
 # requires Go 1.27, so pin PassWall's xray-core recipe to v26.7.28 (go 1.26)
@@ -112,8 +150,27 @@ done
 bash "$KIT_DIR/scripts/apply-c526a.sh" "$SOURCE_DIR"
 cp "$KIT_DIR/.config" .config
 make defconfig
+# These kernel modules must be part of this exact custom kernel build. Never rely on
+# installing kmods from a public feed later, because kernel ABI hashes may differ.
 for symbol in \
+    CONFIG_PACKAGE_luci-app-c526a-wizard \
+    CONFIG_PACKAGE_luci-app-temp \
+    CONFIG_PACKAGE_luci-i18n-base-zh-cn \
+    CONFIG_PACKAGE_luci-i18n-passwall-zh-cn \
+    CONFIG_PACKAGE_luci-app-firewall \
+    CONFIG_PACKAGE_luci-i18n-firewall-zh-cn \
     CONFIG_PACKAGE_luci-app-passwall \
+    CONFIG_PACKAGE_luci-app-passwall_Nftables_Transparent_Proxy \
+    CONFIG_PACKAGE_luci-app-passwall_INCLUDE_SingBox \
+    CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray \
+    CONFIG_PACKAGE_kmod-nft-socket \
+    CONFIG_PACKAGE_kmod-nft-tproxy \
+    CONFIG_PACKAGE_kmod-nf-socket \
+    CONFIG_PACKAGE_kmod-nf-tproxy \
+    CONFIG_PACKAGE_kmod-nft-nat \
+    CONFIG_PACKAGE_kmod-tun \
+    CONFIG_PACKAGE_kmod-inet-diag \
+    CONFIG_PACKAGE_kmod-netlink-diag \
     CONFIG_PACKAGE_liquid-formula \
     CONFIG_PACKAGE_luci-app-liquid-formula \
     CONFIG_PACKAGE_luci-theme-argon; do
@@ -145,6 +202,16 @@ print(f"Verified C526A board-2.bin: {len(data)} bytes, git blob SHA-1 {blob_sha}
 PYBDF
 
 IMAGE_DIR="bin/targets/ipq40xx/generic"
+MANIFEST="$(find "$IMAGE_DIR" -maxdepth 1 -type f -name '*.manifest' -print -quit)"
+[[ -n "$MANIFEST" ]] || { echo "ERROR: target package manifest was not generated" >&2; exit 1; }
 FACTORY="$(find "$IMAGE_DIR" -maxdepth 1 -type f -name '*hiwifi_c526a*factory.ubi' -print -quit)"
+SYSUPGRADE="$(find "$IMAGE_DIR" -maxdepth 1 -type f -name '*hiwifi_c526a*sysupgrade.bin' -print -quit)"
 [[ -n "$FACTORY" ]] || { echo "ERROR: factory.ubi for hiwifi_c526a was not generated" >&2; exit 1; }
-printf 'Factory image: %s\n' "$FACTORY"
+[[ -n "$SYSUPGRADE" ]] || { echo "ERROR: sysupgrade.bin for hiwifi_c526a was not generated" >&2; exit 1; }
+for pkg in luci-app-c526a-wizard luci-app-temp liquid-formula luci-app-liquid-formula luci-i18n-base-zh-cn luci-i18n-passwall-zh-cn; do
+    grep -qE "^${pkg}[[:space:]]" "$MANIFEST" || {
+        echo "ERROR: expected package missing from firmware manifest: ${pkg}" >&2
+        exit 1
+    }
+done
+printf 'Factory image: %s\nSysupgrade image: %s\n' "$FACTORY" "$SYSUPGRADE"

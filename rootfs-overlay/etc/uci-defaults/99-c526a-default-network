@@ -1,0 +1,46 @@
+#!/bin/sh
+# HiWiFi C526A defaults: 192.168.5.1/24, LAN-to-WAN forwarding and WAN NAT.
+# Only change the factory default address; do not overwrite a user-customized LAN address.
+. /lib/functions.sh
+. /lib/functions/system.sh
+
+[ "$(board_name)" = "hiwifi,c526a" ] || exit 0
+
+lan_ip="$(uci -q get network.lan.ipaddr 2>/dev/null)"
+if [ -z "$lan_ip" ] || [ "$lan_ip" = "192.168.1.1" ]; then
+    uci -q set network.lan.ipaddr='192.168.5.1'
+    uci -q set network.lan.netmask='255.255.255.0'
+    uci -q commit network
+    logger -t c526a-defaults 'Set default LAN address to 192.168.5.1/24'
+fi
+
+find_zone() {
+    uci -q show firewall | sed -n "s/^firewall\.\([^.=]*\)\.name='${1}'$/\1/p" | head -n 1
+}
+
+lan_zone="$(find_zone lan)"
+wan_zone="$(find_zone wan)"
+if [ -n "$lan_zone" ]; then
+    uci -q set "firewall.${lan_zone}.input=ACCEPT"
+    uci -q set "firewall.${lan_zone}.output=ACCEPT"
+    uci -q set "firewall.${lan_zone}.forward=ACCEPT"
+fi
+if [ -n "$wan_zone" ]; then
+    uci -q set "firewall.${wan_zone}.masq=1"
+    uci -q set "firewall.${wan_zone}.mtu_fix=1"
+fi
+
+has_lan_wan_forward=0
+for section in $(uci -q show firewall | sed -n "s/^firewall\.\([^.=]*\)\.src='lan'$/\1/p"); do
+    dest="$(uci -q get "firewall.${section}.dest" 2>/dev/null)"
+    [ "$dest" = "wan" ] && has_lan_wan_forward=1
+done
+if [ "$has_lan_wan_forward" -eq 0 ]; then
+    section="$(uci -q add firewall forwarding)"
+    uci -q set "firewall.${section}.src=lan"
+    uci -q set "firewall.${section}.dest=wan"
+fi
+
+uci -q commit firewall
+/etc/init.d/firewall reload >/dev/null 2>&1 || true
+exit 0

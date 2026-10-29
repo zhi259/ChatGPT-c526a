@@ -1,4 +1,4 @@
-name: ImmortalWrt 25.12.2 - HiWiFi C526A
+name: ImmortalWrt 25.12.2 - HiWiFi C526A v9 Final
 
 on:
   workflow_dispatch:
@@ -7,9 +7,11 @@ on:
     paths:
       - '.config'
       - 'files/**'
+      - 'rootfs-overlay/**'
       - 'patches/**'
       - 'scripts/**'
       - 'packages/**'
+      - 'package/**'
       - '.github/workflows/build-c526a.yml'
 
 permissions:
@@ -40,9 +42,10 @@ jobs:
       - name: Upload factory UBI and sysupgrade images
         uses: actions/upload-artifact@v4
         with:
-          name: immortalwrt-v25.12.2-hiwifi-c526a
+          name: immortalwrt-v25.12.2-hiwifi-c526a-v9-final
           if-no-files-found: error
           path: |
             immortalwrt/bin/targets/ipq40xx/generic/*hiwifi_c526a*factory.ubi
             immortalwrt/bin/targets/ipq40xx/generic/*hiwifi_c526a*sysupgrade.bin
             immortalwrt/bin/targets/ipq40xx/generic/sha256sums
+            source-info.txt
