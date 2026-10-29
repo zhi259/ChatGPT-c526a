@@ -99,7 +99,7 @@ return view.extend({
 		var radio2On = uci.get('wireless', 'radio2', 'disabled') !== '1';
 
 		return E('div', { 'class': 'cbi-map' }, [
-			E('h2', {}, _('HiWiFi C526A 快速网络设置向导')),
+			E('h2', {}, _('快速网络设置向导')),
 			E('p', {}, _('按照步骤设置上网方式、路由器管理地址和无线网络。提交后会保存并应用配置。')),
 			E('div', { 'class': 'alert-message warning' }, [
 				E('p', {}, _('注意：修改 LAN 地址会使当前管理页面断开，请稍后改用新地址登录。PPPoE 需要宽带运营商提供的账号和密码；无线密码至少 8 位。'))

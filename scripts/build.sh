@@ -13,24 +13,6 @@ fi
 cd "$SOURCE_DIR"
 printf 'IMMORTALWRT_TAG=v25.12.2\nIMMORTALWRT_COMMIT=%s\n' "$(git rev-parse HEAD)" >> "$WORKSPACE/source-info.txt"
 
-# Add the OpenWrt 25.x temperature widget as a local source package. The source
-# revision is recorded so a successful build is reproducible/auditable.
-TEMP_SRC="$WORKSPACE/luci-app-temp-src"
-if [[ ! -d "$TEMP_SRC/.git" ]]; then
-    git clone --depth 1 https://github.com/ramanarupa/luci-app-temp.git "$TEMP_SRC"
-else
-    git -C "$TEMP_SRC" fetch --depth 1 origin main
-    git -C "$TEMP_SRC" checkout -q FETCH_HEAD
-fi
-# Stage it outside the OpenWrt source until feeds have been installed; it is
-# copied under package/feeds/c526a_local below for reliable package discovery.
-TEMP_PACKAGE_SRC="$WORKSPACE/local-package-src/luci-app-temp"
-rm -rf "$TEMP_PACKAGE_SRC" "$SOURCE_DIR/package/luci-app-temp"
-mkdir -p "$TEMP_PACKAGE_SRC"
-git -C "$TEMP_SRC" archive --format=tar HEAD | tar -xf - -C "$TEMP_PACKAGE_SRC"
-python3 "$KIT_DIR/scripts/patch-temp-widget.py" "$TEMP_PACKAGE_SRC"
-printf 'TEMP_WIDGET_COMMIT=%s\n' "$(git -C "$TEMP_SRC" rev-parse HEAD)" >> "$WORKSPACE/source-info.txt"
-
 # Install the C526A LuCI pages and rpcd helper through OpenWrt's standard
 # rootfs overlay. These pages are interpreted JavaScript plus a shell RPC helper;
 # they do not need to be a separately indexed package. This intentionally avoids
@@ -40,10 +22,11 @@ WIZARD_OVERLAY="$KIT_DIR/rootfs-overlay"
 for rel in \
     www/luci-static/resources/view/c526a/wizard.js \
     www/luci-static/resources/view/c526a/guestwifi.js \
-    www/luci-static/resources/view/status/include/29_c526a_traffic.js \
-    usr/libexec/rpcd/luci.c526a_traffic \
+    www/luci-static/resources/view/status/include/28_c526a_temp.js \
+    usr/libexec/rpcd/luci.c526a_temp \
     usr/share/rpcd/acl.d/luci-app-c526a-wizard.json \
-    usr/share/luci/menu.d/luci-app-c526a-wizard.json; do
+    usr/share/luci/menu.d/luci-app-c526a-wizard.json \
+    sbin/tempinfo; do
     [[ -f "$WIZARD_OVERLAY/$rel" ]] || {
         echo "ERROR: required C526A LuCI overlay file is missing: $WIZARD_OVERLAY/$rel" >&2
         exit 1
@@ -51,7 +34,7 @@ for rel in \
 done
 mkdir -p "$SOURCE_DIR/files"
 cp -a "$WIZARD_OVERLAY/." "$SOURCE_DIR/files/"
-chmod 0755 "$SOURCE_DIR/files/usr/libexec/rpcd/luci.c526a_traffic"
+chmod 0755 "$SOURCE_DIR/files/usr/libexec/rpcd/luci.c526a_temp" "$SOURCE_DIR/files/sbin/tempinfo"
 # Remove stale copies in a reused source tree; the wizard is now an overlay,
 # not a package selected through feeds or .config.
 rm -rf "$SOURCE_DIR/package/luci-app-c526a-wizard" \
@@ -118,22 +101,11 @@ PYFEEDS
 
 ./scripts/feeds install -a
 
-# The upstream temperature widget is a real package. Stage it in the standard
-# package/feeds scan tree and validate its metadata after defconfig. The C526A
-# wizard, guest Wi-Fi UI, WAN-rate widget, menu, ACL and RPC helper are instead
-# installed via the rootfs overlay above, so they need no package index entry.
-TEMP_PACKAGE_DIR="$SOURCE_DIR/package/feeds/c526a_local/luci-app-temp"
-rm -rf "$SOURCE_DIR/package/luci-app-temp" "$TEMP_PACKAGE_DIR"
-mkdir -p "$(dirname "$TEMP_PACKAGE_DIR")"
-cp -a "$TEMP_PACKAGE_SRC" "$TEMP_PACKAGE_DIR"
-[[ -f "$TEMP_PACKAGE_DIR/Makefile" ]] || {
-    echo "ERROR: temperature widget Makefile missing from $TEMP_PACKAGE_DIR" >&2
-    find "$TEMP_PACKAGE_SRC" -maxdepth 4 -type f -print >&2 || true
-    exit 1
-}
-
 # Translate the Liquid Formula LuCI views before configuring/building packages.
 python3 "$KIT_DIR/scripts/patch-liquid-formula-zh.py" "$SOURCE_DIR/feeds/liquid_formula/luci-app-liquid-formula"
+# Heuristic translation audit: report remaining English labels for review, but do not fail the build.
+python3 "$KIT_DIR/scripts/audit-liquid-formula-zh.py" "$SOURCE_DIR/feeds/liquid_formula/luci-app-liquid-formula" || \
+    echo "WARNING: Liquid Formula translation audit could not complete; continuing the firmware build" >&2
 
 # ImmortalWrt 25.12.2's packages feed builds Go 1.26.8. Xray-core >= 26.9.8
 # requires Go 1.27, so pin PassWall's xray-core recipe to v26.7.28 (go 1.26)
@@ -178,17 +150,9 @@ done
 bash "$KIT_DIR/scripts/apply-c526a.sh" "$SOURCE_DIR"
 cp "$KIT_DIR/.config" .config
 make defconfig
-if ! grep -q '^Package: luci-app-temp$' tmp/.packageinfo 2>/dev/null; then
-    echo "ERROR: OpenWrt did not index local temperature package luci-app-temp after make defconfig" >&2
-    echo "Temperature package directory: $TEMP_PACKAGE_DIR" >&2
-    find "$SOURCE_DIR/package/feeds/c526a_local" -maxdepth 5 -type f -name Makefile -print >&2 || true
-    grep -n -E 'Package: luci-app-temp|luci-app-temp' tmp/.packageinfo tmp/.config-package.in 2>/dev/null | head -n 80 >&2 || true
-    exit 1
-fi
 # These kernel modules must be part of this exact custom kernel build. Never rely on
 # installing kmods from a public feed later, because kernel ABI hashes may differ.
 for symbol in \
-    CONFIG_PACKAGE_luci-app-temp \
     CONFIG_PACKAGE_luci-i18n-base-zh-cn \
     CONFIG_PACKAGE_luci-i18n-passwall-zh-cn \
     CONFIG_PACKAGE_luci-app-firewall \
@@ -210,12 +174,6 @@ for symbol in \
     CONFIG_PACKAGE_luci-theme-argon; do
     if ! grep -qx "${symbol}=y" .config; then
         echo "ERROR: make defconfig did not retain ${symbol}=y; check package discovery and dependencies" >&2
-        if [[ "$symbol" == "CONFIG_PACKAGE_luci-app-temp" ]]; then
-            echo "---- temperature package Makefile ----" >&2
-            sed -n '1,100p' "$TEMP_PACKAGE_DIR/Makefile" >&2 || true
-            echo "---- package metadata matches ----" >&2
-            grep -n -E 'Package: luci-app-temp|luci-app-temp' tmp/.packageinfo tmp/.config-package.in 2>/dev/null | head -n 80 >&2 || true
-        fi
         exit 1
     fi
 done
@@ -243,12 +201,12 @@ PYBDF
 
 # Verify that the C526A rootfs overlay supplied the overview widget and its RPC backend.
 ROOTFS_DIR="${BDF_IN_ROOT%/lib/firmware/ath10k/QCA4019/hw1.0/board-2.bin}"
-[[ -f "$ROOTFS_DIR/www/luci-static/resources/view/status/include/29_c526a_traffic.js" ]] || {
-    echo "ERROR: overview traffic widget is missing from the image rootfs" >&2
+[[ -f "$ROOTFS_DIR/www/luci-static/resources/view/status/include/28_c526a_temp.js" ]] || {
+    echo "ERROR: C526A read-only wireless temperature widget is missing from the image rootfs" >&2
     exit 1
 }
-[[ -x "$ROOTFS_DIR/usr/libexec/rpcd/luci.c526a_traffic" ]] || {
-    echo "ERROR: WAN traffic RPC backend is missing or not executable in the image rootfs" >&2
+[[ -x "$ROOTFS_DIR/usr/libexec/rpcd/luci.c526a_temp" ]] || {
+    echo "ERROR: C526A wireless temperature RPC helper is missing or not executable" >&2
     exit 1
 }
 [[ -f "$ROOTFS_DIR/www/luci-static/resources/view/c526a/guestwifi.js" ]] || {
@@ -259,6 +217,22 @@ ROOTFS_DIR="${BDF_IN_ROOT%/lib/firmware/ath10k/QCA4019/hw1.0/board-2.bin}"
     echo "ERROR: C526A LuCI menu definition is missing from the image rootfs" >&2
     exit 1
 }
+[[ -x "$ROOTFS_DIR/sbin/tempinfo" ]] || {
+    echo "ERROR: C526A temperature summary override /sbin/tempinfo is missing or not executable" >&2
+    exit 1
+}
+grep -Fq 'C526A overview temperature summary' "$ROOTFS_DIR/sbin/tempinfo" || {
+    echo "ERROR: /sbin/tempinfo in the staged rootfs is not the C526A hwmon-aware override; refusing to ship broken WiFi temperature output" >&2
+    exit 1
+}
+grep -Fq 'WiFi: %s\n' "$ROOTFS_DIR/sbin/tempinfo" || {
+    echo "ERROR: C526A /sbin/tempinfo output formatter is missing from the staged rootfs" >&2
+    exit 1
+}
+if grep -Eq 'C526A 快速设置向导|C526A 访客 Wi-Fi' "$ROOTFS_DIR/usr/share/luci/menu.d/luci-app-c526a-wizard.json"; then
+    echo "ERROR: old C526A-prefixed menu titles remain in the staged rootfs" >&2
+    exit 1
+fi
 
 IMAGE_DIR="bin/targets/ipq40xx/generic"
 MANIFEST="$(find "$IMAGE_DIR" -maxdepth 1 -type f -name '*.manifest' -print -quit)"
@@ -267,7 +241,7 @@ FACTORY="$(find "$IMAGE_DIR" -maxdepth 1 -type f -name '*hiwifi_c526a*factory.ub
 SYSUPGRADE="$(find "$IMAGE_DIR" -maxdepth 1 -type f -name '*hiwifi_c526a*sysupgrade.bin' -print -quit)"
 [[ -n "$FACTORY" ]] || { echo "ERROR: factory.ubi for hiwifi_c526a was not generated" >&2; exit 1; }
 [[ -n "$SYSUPGRADE" ]] || { echo "ERROR: sysupgrade.bin for hiwifi_c526a was not generated" >&2; exit 1; }
-for pkg in luci-app-temp liquid-formula luci-app-liquid-formula luci-i18n-base-zh-cn luci-i18n-passwall-zh-cn; do
+for pkg in liquid-formula luci-app-liquid-formula luci-i18n-base-zh-cn luci-i18n-passwall-zh-cn; do
     grep -qE "^${pkg}[[:space:]]" "$MANIFEST" || {
         echo "ERROR: expected package missing from firmware manifest: ${pkg}" >&2
         exit 1

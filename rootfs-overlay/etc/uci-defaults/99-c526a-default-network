@@ -1,5 +1,5 @@
 #!/bin/sh
-# HiWiFi C526A defaults: 192.168.5.1/24, LAN-to-WAN forwarding and WAN NAT.
+# HiWiFi C526A defaults: LAN address, supported radio1 channel, forwarding and WAN NAT.
 # Only change the factory default address; do not overwrite a user-customized LAN address.
 . /lib/functions.sh
 . /lib/functions/system.sh
@@ -12,6 +12,16 @@ if [ -z "$lan_ip" ] || [ "$lan_ip" = "192.168.1.1" ]; then
     uci -q set network.lan.netmask='255.255.255.0'
     uci -q commit network
     logger -t c526a-defaults 'Set default LAN address to 192.168.5.1/24'
+fi
+
+# On fresh defaults, channel 100 was not permitted for AP mode on this board.
+# Use the verified working channel 149; leave any other user-selected channel alone.
+radio1_channel="$(uci -q get wireless.radio1.channel 2>/dev/null)"
+if [ "$radio1_channel" = "100" ]; then
+    uci -q set wireless.radio1.channel='149'
+    uci -q set wireless.radio1.htmode='VHT80'
+    uci -q commit wireless
+    logger -t c526a-defaults 'Changed default radio1 channel from unsupported 100 to verified working 149'
 fi
 
 find_zone() {
@@ -43,4 +53,8 @@ fi
 
 uci -q commit firewall
 /etc/init.d/firewall reload >/dev/null 2>&1 || true
+
+# Enable bounded, read-only MT7615E startup recovery for subsequent boots.
+# The service never unloads a working module or touches calibration partitions.
+/etc/init.d/mt7615_reboot enable >/dev/null 2>&1 || true
 exit 0

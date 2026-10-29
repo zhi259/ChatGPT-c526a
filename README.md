@@ -1,38 +1,53 @@
-# ImmortalWrt 25.12.2 — HiWiFi C526A v9 Final build kit
+# ImmortalWrt 25.12.2 — HiWiFi C526A v10 Validation build kit
 
 本工具包面向极路由 X C526A（Qualcomm IPQ4019，`ipq40xx/generic`），基于 ImmortalWrt `v25.12.2` / Linux 6.12。它是用于 GitHub Actions 编译最终镜像的源码工具包；本地没有完成完整交叉编译，因此不能把它当成已编译固件。
 
-## v9 构建修复记录
+## v10 改动记录
 
-GitHub Actions 曾连续报告向导的 Makefile 虽然存在，但 `luci-app-c526a-wizard` 未进入 `tmp/.packageinfo`，导致 `make defconfig` 删除对应配置项。该向导仅包含 LuCI JavaScript 页面、菜单/ACL JSON 与 shell RPC 后端，并不需要单独编译成软件包。本版彻底取消向导的软件包选择和 feed 索引依赖，改为通过 OpenWrt 标准 `files/` rootfs overlay 安装这些运行时文件，并在镜像生成后检查各文件确实存在且 RPC 后端可执行。温度组件 `luci-app-temp` 仍是单独的软件包，其元数据和 `.config` 会单独检查。
+GitHub Actions 曾连续报告向导的 Makefile 虽然存在，但 `luci-app-c526a-wizard` 未进入 `tmp/.packageinfo`，导致 `make defconfig` 删除对应配置项。该向导仅包含 LuCI JavaScript 页面、菜单/ACL JSON 与 shell RPC 后端，并不需要单独编译成软件包。本版彻底取消向导的软件包选择和 feed 索引依赖，改为通过 OpenWrt 标准 `files/` rootfs overlay 安装这些运行时文件，并在镜像生成后检查各文件确实存在且 RPC 后端可执行。温度显示改为 rootfs overlay 中的只读组件，不再依赖独立温度预警软件包。
 
-## v9 本次变更
+## v10 本次变更
 
-- LuCI 状态 → 概览新增温度组件，自动发现 `hwmon` 传感器，显示 MT7615E 2.4 GHz 温度和两颗 QCA4019 5 GHz 温度。传感器名称按设备路径识别，不依赖 `hwmon0/1/2` 编号。
-- LuCI 状态 → 概览新增 WAN 实时网络速率组件，每 2 秒读取 WAN 当前三层设备的收发字节计数，计算并显示实时下载/上传速率；支持 DHCP 与 PPPoE 接口名称变化，不依赖物理网卡固定命名。
+- LuCI 状态 → 概览使用轻量只读无线温度组件；仅在驱动确实向 hwmon 注册有效读数时显示 MT7615E 2.4 GHz 与两颗 QCA4019 5 GHz 温度。移除温度预警/阈值设置插件与 WAN 实时速率组件。
 - 默认首次启动 LAN 地址改为 `192.168.5.1/24`，DHCP 默认池沿用 ImmortalWrt 默认值；用户已经自定义的非默认 LAN 地址不会被覆盖。
 - 首次启动安全补齐 LAN→WAN 转发和 WAN masquerading 设置，以避免路由器本机能上网、LAN 客户端却不能上网的常见配置问题。
 - 保留 Linux 6.12 DSA 的 `lan2`、`lan3`、`lan4` 与 `wan` 接口映射、MAC/校准数据处理、专用 QCA4019 BDF 校验和 NAND sysupgrade 支持。
+
+- 保留 `/sbin/tempinfo` 只读诊断命令，按设备路径输出可读取的无线温度；它只读取 hwmon，不重启驱动、不修改校准数据。
+- 增加启动期 MT7615E 检查：仅在 PCI 设备缺失时有限次数 rescan；仅在 `of_node` 存在时尝试加载驱动，不执行无条件 `rmmod`。
+- 首次初始化时，若 radio1 仍使用会导致 AP 启动失败的默认信道 100，则自动改为实机验证可用的 149（VHT80）；已有其他信道设置不会被覆盖。
+- 菜单和页面标题改为「快速设置向导」与「访客 Wi-Fi」，移除前缀 `C526A`。
 - Liquid Formula LuCI 界面增加常用标签的简体中文替换，并附带《Liquid Formula 使用说明》安装到 `/usr/share/doc/c526a/`。上游未覆盖到的新增提示文字仍可能保留英文。
-- 新增中文「网络 → C526A 快速设置向导」：可一次配置 WAN（DHCP/PPPoE/静态 IPv4）、LAN 管理地址和 2.4/5 GHz Wi-Fi；应用前校验输入并提示 LAN 地址变化会断开当前会话。
-- 新增中文「网络 → C526A 访客 Wi-Fi」：可分别在 2.4 GHz 与两颗 5 GHz 无线模块启用访客 SSID，自动配置独立的 `guest` IPv4 子网、DHCP、访客防火墙区与仅 `guest → wan` 转发；默认拒绝访客访问路由器管理服务及主 LAN，并开启无线客户端隔离。
+- 新增中文「网络 → 快速设置向导」：可一次配置 WAN（DHCP/PPPoE/静态 IPv4）、LAN 管理地址和 2.4/5 GHz Wi-Fi；应用前校验输入并提示 LAN 地址变化会断开当前会话。
+- 新增中文「网络 → 访客 Wi-Fi」：可分别在 2.4 GHz 与两颗 5 GHz 无线模块启用访客 SSID，自动配置独立的 `guest` IPv4 子网、DHCP、访客防火墙区与仅 `guest → wan` 转发；默认拒绝访客访问路由器管理服务及主 LAN，并开启无线客户端隔离。
 - 维持 PassWall（nftables）配置、Go 1.26 可构建的 Xray-core 版本固定、Argon 主题及简体中文语言包，并增加构建后关键软件包清单检查。
 
 ## 使用方式
 
 1. 解压 ZIP，检查里面的顶层目录 `c526a-immortalwrt-kit/`。
 2. 将 ZIP 上传到现有 GitHub 仓库根目录并命名为 `c526a-immortalwrt-kit.zip`（替换原同名 ZIP）；当前仓库的 `unpack-c526a-kit.yml` 会把目录内容解压/提交。
-3. 等解压工作流完成后，打开 Actions，手动运行 **ImmortalWrt 25.12.2 - HiWiFi C526A v9 Final**。如果解压后的 `.config`、`files/`、`scripts/` 已提交，路径触发也会自动启动构建。
-4. 等 Actions 完成后下载 Artifact `immortalwrt-v25.12.2-hiwifi-c526a-v9-final`。成功的 Artifact 应包含 `factory.ubi`、`sysupgrade.bin`、`sha256sums` 和 `source-info.txt`。
+3. 等解压工作流完成后，打开 Actions，手动运行 **ImmortalWrt 25.12.2 - HiWiFi C526A v10 Validation**。如果解压后的 `.config`、`files/`、`scripts/` 已提交，路径触发也会自动启动构建。
+4. 等 Actions 完成后下载 Artifact `immortalwrt-v25.12.2-hiwifi-c526a-v10-validation`。成功的 Artifact 应包含 `factory.ubi`、`sysupgrade.bin`、`sha256sums` 和 `source-info.txt`。
 5. 首次刷机前备份原厂分区、ART 校准数据和配置；首次安装与系统内升级请使用正确的镜像格式。若要验证全新 LAN 默认配置，升级时不要保留旧设置。
 
-## 概览页实时网络速率
 
-LuCI「状态 → 概览」新增「实时网络速率（WAN）」区域，每 2 秒刷新一次，显示 WAN 下载/上传速度。组件通过 rpcd 后端读取当前 WAN 逻辑接口的三层设备（`l3_device`）收发字节计数，再根据相邻两次采样的差值计算速度；因此可适配 DHCP 与 PPPoE 使用不同接口名的情况。首次进入页面时需要经过一次采样，速率数值才会出现。如果 WAN 设备状态不可读取，会显示提示而不是伪造流量。速率单位使用 B/s、KiB/s、MiB/s 或 GiB/s；此显示为 WAN 接口统计，不是逐客户端流量统计。
+## 已刷机设备的即时修复（不必重新编译）
 
+若已刷入旧版 v9，可将 `scripts/fix-running-router.sh` 复制到路由器后以 root 执行；它会修正 `/sbin/tempinfo`、移除菜单标题前缀，并且仅在 radio1 仍为已知失败的信道 100 时切换到 149。执行后请硬刷新浏览器。脚本不改变 LAN 地址，也不会刷写固件。
+
+```sh
+scp scripts/fix-running-router.sh root@192.168.1.1:/tmp/
+ssh root@192.168.1.1 'sh /tmp/fix-running-router.sh'
+```
+
+如果路由器管理地址不同，请把命令中的 `192.168.1.1` 换成当前地址。
+
+## 概况页无线温度
+
+概况页只读显示 hwmon 可读取的无线温度，每 10 秒刷新，不含预警阈值或 WAN 实时速率卡片。若 2.4 GHz 温度缺失，先检查 `mt7615_phy0` 是否在 `/sys/class/hwmon/` 注册；前端组件不能替代驱动/PCIe 恢复。
 ## 快速网络设置向导
 
-首次登录后，打开「网络 → C526A 快速设置向导」即可完成基础设置：
+首次登录后，打开「网络 → 快速设置向导」即可完成基础设置：
 
 1. 选择上网方式：DHCP 自动获取、PPPoE 宽带拨号或静态 IPv4。PPPoE 需填写运营商提供的账号/密码；静态地址需填写 WAN IP、掩码、网关和至少一个 DNS（默认建议值为 `1.1.1.1 8.8.8.8`，可自行修改）。
 2. 设置 LAN 管理地址，默认 `192.168.5.1`。应用后当前浏览器会话可能断开，请切换到新地址。
@@ -43,7 +58,7 @@ LuCI「状态 → 概览」新增「实时网络速率（WAN）」区域，每 2
 
 ## 访客 Wi-Fi
 
-进入 LuCI「网络 → C526A 访客 Wi-Fi」，启用访客无线网络后，设置 SSID、WPA2 密码并选择要广播的无线模块。首次启用时必须输入 8–63 位可打印 ASCII 密码；后续如果不修改密码，密码框可以留空。
+进入 LuCI「网络 → 访客 Wi-Fi」，启用访客无线网络后，设置 SSID、WPA2 密码并选择要广播的无线模块。首次启用时必须输入 8–63 位可打印 ASCII 密码；后续如果不修改密码，密码框可以留空。
 
 默认访客网关是 `192.168.6.1/24`，DHCP 地址池为 `192.168.6.100–192.168.6.249`。如果主 LAN 或上级网络也使用 `192.168.6.0/24`，请先改访客网关为其他不冲突网段。应用时会创建或更新空桥 `br-guest`、DHCP 与防火墙配置：访客侧默认 `input=REJECT`、`forward=REJECT`，只放行 IPv4 DNS/DHCP 到路由器，并允许访客转发到 WAN；不会创建访客到 LAN 的转发。无线客户端隔离同时开启。
 
@@ -65,7 +80,7 @@ LuCI「状态 → 概览」新增「实时网络速率（WAN）」区域，每 2
 
 - C526A 专用 QCA4019 BDF 必须为 24,300 字节，且 Git blob SHA-1 为 `ce91af5b144d1238ca4eb35dcfdf34c537f9cc7a`；不一致即让构建失败。
 - v25.12.2 的 PassWall Xray-core 固定为 `26.7.28`，SHA-256 为 `a9afe86349c7bd3e6cae60125e62a5ada09d102e1a2760623e77c24a84dbfb46`，以兼容当期 Go 1.26.x 工具链。
-- 最终构建会检查关键包出现在固件 manifest，并要求同时生成 `factory.ubi` 和 `sysupgrade.bin`；编译完成后还会检查实时流量组件的前端文件、可执行 RPC 后端以及访客 Wi-Fi 页面确实存在于镜像 rootfs。
+- 最终构建会检查关键包出现在固件 manifest，并要求同时生成 `factory.ubi` 和 `sysupgrade.bin`；编译完成后还会检查无线温度组件的前端文件、可执行 RPC 后端、温度摘要以及访客 Wi-Fi 页面确实存在于镜像 rootfs。构建 Artifact 还包含 Liquid Formula 的启发式未翻译字符串审计报告。
 
 ## 上游依据
 
@@ -93,6 +108,16 @@ LuCI「状态 → 概览」新增「实时网络速率（WAN）」区域，每 2
 ## PassWall kernel-module dependencies
 
 The image config explicitly enables `kmod-nft-socket`, `kmod-nft-tproxy`, their `kmod-nf-socket` / `kmod-nf-tproxy` dependencies, plus `kmod-tun`, `kmod-inet-diag`, and `kmod-netlink-diag` for the selected PassWall cores. `scripts/build.sh` checks after `make defconfig` that these selections survive. Keep these kernel modules in the same image as the custom kernel; do not install kmods from a different build's feed, even if the displayed kernel version number looks identical, because kernel ABI hashes can differ.
-### 向导的安装方式（v9，版本号不变）
+### 向导的安装方式（overlay）
 
-为避免重复触发 OpenWrt 包索引问题，C526A 快速设置向导、访客 Wi-Fi 页面、概览 WAN 实时速率页面、rpcd 后端、LuCI 菜单和 ACL 已统一改为放入 `rootfs-overlay/`，由标准 rootfs `files/` 机制安装，不再定义或选择 `luci-app-c526a-wizard` 这个独立 APK 包。因此它不会出现在软件包 manifest 中，但其菜单、页面、ACL 与 RPC 文件必须通过构建后检查。温度组件 `luci-app-temp` 仍作为实际软件包构建，并在 `make defconfig` 后检查元数据和配置项。
+为避免重复触发 OpenWrt 包索引问题，C526A 快速设置向导、访客 Wi-Fi 页面、概览无线温度页面、rpcd 后端、LuCI 菜单和 ACL 统一放入 `rootfs-overlay/`，由标准 rootfs `files/` 机制安装，不再定义或选择 `luci-app-c526a-wizard` 这个独立 APK 包。温度概况页面也是 overlay 文件，不依赖独立温度预警 APK。
+
+
+## v10 已知限制与无线恢复机制
+
+- 固化 `Vfac_mac` 不带尾随空格的读取方式。
+- C526A MT7615 节点合并到 Linux 6.12 已有的 `&pcie0 { pcie@0 { ... } }` 根端口分支，端点命名为 `wifi@0,0`，`reg = <0x00010000 0 0 0 0>` 对应 PCI BDF `0000:01:00.0`；这是待编译和实机验证的候选 DTS 修正，不代表 EEPROM 已确认从 Factory 读取。
+- 概况页使用只读 hwmon 温度卡片；`luci-app-temp` 预警插件和 WAN 实时速率卡片已从本次配置中移除。若驱动没有注册温度传感器，界面会提示未检测到传感器，而不会伪造读数。
+- `/etc/init.d/mt7615_reboot` 由首次启动的 `90-c526a-enable-mt7615-reboot` 启用。它会在关机/重启阶段尝试卸载 `mt7615e`，这是 OpenWrt/mt76 社区针对 IPQ4019 + MT7615 热重启后固件状态异常的已报告 workaround；启动时仅对缺失的 `0000:01:00.0` 做有限次数 PCI rescan，只有设备存在 `of_node` 时才尝试 `modprobe mt7615e`。如果模块仍被占用而无法卸载，脚本会记日志，不能保证热重启问题一定解决。它不写 Factory/ART/EEPROM，也不设置发射功率。
+- Liquid Formula 翻译脚本会翻译词典覆盖的 UI 字符串；构建同时生成启发式待翻译审计报告。由于上游 `main` 分支可更新，尚不能保证所有上游新字符串均已汉化。
+- 本工具包尚未在本环境执行完整交叉编译，也未在 C526A 实机验证 DTS/温度/发射功率。固件生成并刷机后仍需按清单验证。

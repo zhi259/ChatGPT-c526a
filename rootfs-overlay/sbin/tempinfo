@@ -1,0 +1,55 @@
+#!/bin/sh
+# C526A overview temperature summary for ImmortalWrt's /sbin/tempinfo hook.
+# Read the three wireless hwmon sensors by device identity, not hwmon index.
+# A zero/invalid reading is omitted rather than rendered as a real 0.0°C.
+SYSFS_ROOT="${C526A_SYSFS_ROOT:-/sys}"
+wifi24=""
+wifi5a=""
+wifi5b=""
+
+format_temp() {
+    value="$1"
+    case "$value" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    [ "$value" -gt 0 ] 2>/dev/null || return 1
+    [ "$value" -le 150000 ] 2>/dev/null || return 1
+    whole=$((value / 1000))
+    tenth=$(((value % 1000 + 50) / 100))
+    if [ "$tenth" -ge 10 ]; then
+        whole=$((whole + 1))
+        tenth=0
+    fi
+    printf '%s.%s' "$whole" "$tenth"
+}
+
+for hwmon in "$SYSFS_ROOT"/class/hwmon/hwmon*; do
+    [ -d "$hwmon" ] || continue
+    name="$(cat "$hwmon/name" 2>/dev/null)"
+    devpath="$(readlink -f "$hwmon/device" 2>/dev/null)"
+    target=""
+    case "$name:$devpath" in
+        mt7615_phy0:*) target=wifi24 ;;
+        ath10k_hwmon:*a000000.wifi*) target=wifi5a ;;
+        ath10k_hwmon:*a800000.wifi*) target=wifi5b ;;
+        *) continue ;;
+    esac
+
+    for input in "$hwmon"/temp*_input; do
+        [ -r "$input" ] || continue
+        raw="$(cat "$input" 2>/dev/null)"
+        temp="$(format_temp "$raw")" || continue
+        case "$target" in
+            wifi24) wifi24="$temp" ;;
+            wifi5a) wifi5a="$temp" ;;
+            wifi5b) wifi5b="$temp" ;;
+        esac
+        break
+    done
+done
+
+parts=""
+[ -n "$wifi24" ] && parts="${parts}${parts:+, }2.4G ${wifi24}°C"
+[ -n "$wifi5a" ] && parts="${parts}${parts:+, }5G-1 ${wifi5a}°C"
+[ -n "$wifi5b" ] && parts="${parts}${parts:+, }5G-2 ${wifi5b}°C"
+[ -n "$parts" ] && printf 'WiFi: %s\n' "$parts"

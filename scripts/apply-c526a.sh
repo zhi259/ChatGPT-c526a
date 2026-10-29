@@ -188,7 +188,7 @@ s = replace_board_case(s, "ipq40xx_setup_interfaces()", "hiwifi,c526a", interfac
 
 macs_block = (
     '\thiwifi,c526a)\n'
-    '\t\tlan_mac=$(mtd_get_mac_ascii bdinfo "Vfac_mac ")\n'
+    '\t\tlan_mac=$(mtd_get_mac_ascii bdinfo "Vfac_mac")\n'
     '\t\tif echo "$lan_mac" | grep -Eq "^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$"; then\n'
     '\t\t\tlabel_mac=$lan_mac\n'
     '\t\t\twan_mac=$(macaddr_add "$lan_mac" 1)\n'
@@ -239,7 +239,7 @@ def update_ath10k_case(text, firmware_marker, board_block):
 low_band_block = (
     '\thiwifi,c526a)\n'
     '\t\tcaldata_extract "ART" 0x1000 0x2f20\n'
-    '\t\tlan_mac=$(mtd_get_mac_ascii bdinfo "Vfac_mac ")\n'
+    '\t\tlan_mac=$(mtd_get_mac_ascii bdinfo "Vfac_mac")\n'
     '\t\tif echo "$lan_mac" | grep -Eq "^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$"; then\n'
     '\t\t\tath10k_patch_mac "$(macaddr_add "$lan_mac" +2)"\n'
     '\t\tfi\n'
@@ -250,7 +250,7 @@ s = update_ath10k_case(s, '"ath10k/pre-cal-ahb-a000000.wifi.bin")', low_band_blo
 high_band_block = (
     '\thiwifi,c526a)\n'
     '\t\tcaldata_extract "ART" 0x5000 0x2f20\n'
-    '\t\tlan_mac=$(mtd_get_mac_ascii bdinfo "Vfac_mac ")\n'
+    '\t\tlan_mac=$(mtd_get_mac_ascii bdinfo "Vfac_mac")\n'
     '\t\tif echo "$lan_mac" | grep -Eq "^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$"; then\n'
     '\t\t\tath10k_patch_mac "$(macaddr_add "$lan_mac" +3)"\n'
     '\t\tfi\n'

@@ -1,6 +1,6 @@
 {
   "admin/network/c526a-wizard": {
-    "title": "C526A 快速设置向导",
+    "title": "快速设置向导",
     "order": 5,
     "action": {
       "type": "view",
@@ -13,7 +13,7 @@
     }
   },
   "admin/network/c526a-guestwifi": {
-    "title": "C526A 访客 Wi-Fi",
+    "title": "访客 Wi-Fi",
     "order": 6,
     "action": {
       "type": "view",

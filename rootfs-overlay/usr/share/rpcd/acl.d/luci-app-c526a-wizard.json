@@ -1,6 +1,6 @@
 {
   "luci-app-c526a-wizard": {
-    "description": "Grant access to the HiWiFi C526A setup, guest Wi-Fi and traffic status pages",
+    "description": "Grant read-only wireless temperature access and C526A setup/guest Wi-Fi configuration",
     "read": {
       "uci": [
         "network",
@@ -9,7 +9,7 @@
         "firewall"
       ],
       "ubus": {
-        "luci.c526a_traffic": [
+        "luci.c526a_temp": [
           "getData"
         ]
       }

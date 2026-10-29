@@ -1,9 +1,7 @@
 name: Unpack C526A kit
 
 on:
-  # 手动运行也可以，适合 ZIP 已经上传、但之前没有触发工作流的情况。
   workflow_dispatch:
-  # 上传/更新 ZIP 后自动解压。
   push:
     paths:
       - '*.zip'
@@ -24,7 +22,6 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: ${{ github.ref }}
-          # 需要更新 ZIP 内的 build-c526a.yml，所以用带有 Workflows: write 权限的 PAT。
           token: ${{ secrets.UNPACK_TOKEN }}
 
       - name: Locate and validate ZIP
@@ -39,7 +36,7 @@ jobs:
             exit 1
           fi
           if (( ${#archives[@]} != 1 )); then
-            printf '::error::仓库根目录中找到多个 ZIP，请只保留要解压的工具包。\n'
+            echo '::error::仓库根目录中找到多个 ZIP，请只保留要解压的工具包。'
             printf '  %s\n' "${archives[@]}"
             exit 1
           fi
@@ -48,7 +45,6 @@ jobs:
           rm -rf "$tmp"
           mkdir -p "$tmp"
           unzip -q "$archive" -d "$tmp"
-
           kit="$tmp/c526a-immortalwrt-kit"
           if [[ ! -d "$kit" || ! -f "$kit/README.md" || ! -f "$kit/.config" || ! -f "$kit/scripts/apply-c526a.sh" ]]; then
             echo '::error::ZIP 内部目录结构不符合预期；需要包含 c526a-immortalwrt-kit/README.md、.config 和 scripts/apply-c526a.sh。'
@@ -57,21 +53,24 @@ jobs:
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
           echo "kit=$kit" >> "$GITHUB_OUTPUT"
 
-      - name: Extract kit files into repository root
+      - name: Extract kit and remove obsolete v9 files
         shell: bash
         env:
           KIT_DIR: ${{ steps.archive.outputs.kit }}
-          ARCHIVE: ${{ steps.archive.outputs.archive }}
         run: |
           set -Eeuo pipefail
-          # ZIP 顶层目录下的内容展平到仓库根目录，不会多套一层目录。
           cp -a "$KIT_DIR/." .
-          # 保留原 ZIP；这样由本工作流提交解压结果时，不会因删除 ZIP 再触发一次解压工作流。
+          # The v9 unpack workflow copied files but did not delete omitted files.
+          # Remove only explicitly retired components so they are not left in GitHub.
+          rm -f \
+            rootfs-overlay/www/luci-static/resources/view/status/include/29_c526a_traffic.js \
+            rootfs-overlay/usr/libexec/rpcd/luci.c526a_traffic \
+            scripts/patch-temp-widget.py
+          rm -rf package/luci-app-c526a-wizard
           echo '解压后的仓库文件：'
-          find . -maxdepth 4 -type f \
+          find . -maxdepth 5 -type f \
             ! -path './.git/*' \
-            ! -path './.github/workflows/unpack-c526a-kit.yml' \
-            | sort | sed -n '1,160p'
+            | sort | sed -n '1,200p'
 
       - name: Commit extracted files
         shell: bash
@@ -86,5 +85,5 @@ jobs:
             echo '没有新的解压文件需要提交。'
             exit 0
           fi
-          git commit -m 'Add extracted C526A ImmortalWrt build kit'
+          git commit -m 'Update C526A v10 build kit'
           git push origin "HEAD:${BRANCH_NAME}"

@@ -1,13 +1,78 @@
 #!/bin/sh /etc/rc.common
 
+# C526A MT7615E soft-reboot workaround plus bounded startup recovery.
+# Community reports for IPQ4019 + MT7615 describe stale firmware state after a
+# warm reboot. Unload the module during shutdown so a subsequent boot can probe
+# the chip from a cleaner state. This is a workaround, not a hardware reset.
+# Never write calibration partitions or override TX power.
+
+START=99
 STOP=60
 
-stop() {
-	. /lib/functions.sh
+log() {
+    logger -t mt7615_reboot "$*"
+}
 
-	case "$(board_name)" in
-		hiwifi,c526a)
-			rmmod mt7615e
-			;;
-	esac
+start() {
+    . /lib/functions.sh
+    . /lib/functions/system.sh
+
+    [ "$(board_name)" = "hiwifi,c526a" ] || return 0
+
+    dev='/sys/bus/pci/devices/0000:01:00.0'
+    rescan='/sys/bus/pci/rescan'
+
+    if [ ! -d "$dev" ]; then
+        n=1
+        while [ "$n" -le 3 ]; do
+            if [ -w "$rescan" ]; then
+                echo 1 > "$rescan" 2>/dev/null || true
+            fi
+            sleep 2
+            [ -d "$dev" ] && break
+            n=$((n + 1))
+        done
+    fi
+
+    if [ ! -d "$dev" ]; then
+        log 'MT7615E PCI function 0000:01:00.0 is still absent after three bounded rescan attempts; no driver/module changes made'
+        return 0
+    fi
+
+    if [ ! -e "$dev/of_node" ]; then
+        log 'MT7615E PCI function exists but has no of_node; refusing to reload the driver because EEPROM calibration association is unverified'
+        return 0
+    fi
+
+    if [ ! -L "$dev/driver" ]; then
+        modprobe mt7615e 2>/dev/null || true
+        n=1
+        while [ "$n" -le 5 ]; do
+            [ -L "$dev/driver" ] && break
+            sleep 1
+            n=$((n + 1))
+        done
+    fi
+
+    if [ -L "$dev/driver" ]; then
+        log 'MT7615E PCI function and OF node are present; driver is bound'
+    else
+        log 'MT7615E PCI function and OF node are present but driver is not bound after modprobe attempt'
+    fi
+    return 0
+}
+
+stop() {
+    . /lib/functions.sh
+    . /lib/functions/system.sh
+    [ "$(board_name)" = "hiwifi,c526a" ] || return 0
+
+    if grep -q '^mt7615e ' /proc/modules 2>/dev/null; then
+        if rmmod mt7615e 2>/dev/null; then
+            log 'unloaded mt7615e during shutdown to avoid stale firmware state on warm reboot'
+        else
+            log 'WARNING: could not unload mt7615e during shutdown; it may still be in use'
+        fi
+    fi
+    return 0
 }

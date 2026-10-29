@@ -269,15 +269,11 @@
 	perst-gpios = <&tlmm 38 GPIO_ACTIVE_LOW>;
 	wake-gpios = <&tlmm 50 GPIO_ACTIVE_LOW>;
 
-	bridge@0,0 {
-		reg = <0x00000000 0 0 0 0>;
-		#address-cells = <3>;
-		#size-cells = <2>;
-		ranges;
-
-		wifi@1,0 {
+	/* Merge into the existing Linux 6.12 pcie@0 root-port node. */
+	pcie@0 {
+		wifi@0,0 {
 			compatible = "mediatek,mt76";
-			reg = <0x0000 0 0 0 0>;
+			reg = <0x00010000 0 0 0 0>;
 			mediatek,mtd-eeprom = <&factory 0x0000>;
 			ieee80211-freq-limit = <2400000 2500000>;
 		};
