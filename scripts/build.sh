@@ -13,17 +13,13 @@ fi
 cd "$SOURCE_DIR"
 printf 'IMMORTALWRT_TAG=v25.12.2\nIMMORTALWRT_COMMIT=%s\n' "$(git rev-parse HEAD)" >> "$WORKSPACE/source-info.txt"
 
-# Install the C526A LuCI pages and rpcd helper through OpenWrt's standard
-# rootfs overlay. These pages are interpreted JavaScript plus a shell RPC helper;
-# they do not need to be a separately indexed package. This intentionally avoids
-# the repeated failure where Makefile exists but the custom package is absent
-# from tmp/.packageinfo and make defconfig drops its CONFIG_PACKAGE option.
+# Install the C526A LuCI pages through OpenWrt's standard rootfs overlay.
+# Wireless temperatures are already shown in the existing top summary bar via
+# /sbin/tempinfo, so do not install a duplicate overview widget or its RPC helper.
 WIZARD_OVERLAY="$KIT_DIR/rootfs-overlay"
 for rel in \
     www/luci-static/resources/view/c526a/wizard.js \
     www/luci-static/resources/view/c526a/guestwifi.js \
-    www/luci-static/resources/view/status/include/28_c526a_temp.js \
-    usr/libexec/rpcd/luci.c526a_temp \
     usr/share/rpcd/acl.d/luci-app-c526a-wizard.json \
     usr/share/luci/menu.d/luci-app-c526a-wizard.json \
     sbin/tempinfo; do
@@ -33,10 +29,13 @@ for rel in \
     }
 done
 mkdir -p "$SOURCE_DIR/files"
+# Retire v10's redundant overview card and RPC helper even if SOURCE_DIR is reused.
+rm -f \
+    "$SOURCE_DIR/files/www/luci-static/resources/view/status/include/28_c526a_temp.js" \
+    "$SOURCE_DIR/files/usr/libexec/rpcd/luci.c526a_temp"
 cp -a "$WIZARD_OVERLAY/." "$SOURCE_DIR/files/"
-chmod 0755 "$SOURCE_DIR/files/usr/libexec/rpcd/luci.c526a_temp" "$SOURCE_DIR/files/sbin/tempinfo"
-# Remove stale copies in a reused source tree; the wizard is now an overlay,
-# not a package selected through feeds or .config.
+chmod 0755 "$SOURCE_DIR/files/sbin/tempinfo"
+# Remove stale package copies; the wizard is an overlay, not a separate APK package.
 rm -rf "$SOURCE_DIR/package/luci-app-c526a-wizard" \
     "$SOURCE_DIR/package/feeds/c526a_local/luci-app-c526a-wizard"
 
@@ -199,16 +198,17 @@ if len(data) != 24300 or blob_sha != expected:
 print(f"Verified C526A board-2.bin: {len(data)} bytes, git blob SHA-1 {blob_sha}")
 PYBDF
 
-# Verify that the C526A rootfs overlay supplied the overview widget and its RPC backend.
+# Verify the retained top temperature summary is present and v10's duplicate
+# standalone wireless-temperature overview card/backend are absent.
 ROOTFS_DIR="${BDF_IN_ROOT%/lib/firmware/ath10k/QCA4019/hw1.0/board-2.bin}"
-[[ -f "$ROOTFS_DIR/www/luci-static/resources/view/status/include/28_c526a_temp.js" ]] || {
-    echo "ERROR: C526A read-only wireless temperature widget is missing from the image rootfs" >&2
-    exit 1
-}
-[[ -x "$ROOTFS_DIR/usr/libexec/rpcd/luci.c526a_temp" ]] || {
-    echo "ERROR: C526A wireless temperature RPC helper is missing or not executable" >&2
-    exit 1
-}
+for obsolete in \
+    "$ROOTFS_DIR/www/luci-static/resources/view/status/include/28_c526a_temp.js" \
+    "$ROOTFS_DIR/usr/libexec/rpcd/luci.c526a_temp"; do
+    [[ ! -e "$obsolete" ]] || {
+        echo "ERROR: obsolete standalone wireless-temperature component remains: $obsolete" >&2
+        exit 1
+    }
+done
 [[ -f "$ROOTFS_DIR/www/luci-static/resources/view/c526a/guestwifi.js" ]] || {
     echo "ERROR: C526A guest Wi-Fi LuCI page is missing from the image rootfs" >&2
     exit 1

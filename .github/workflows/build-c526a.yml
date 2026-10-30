@@ -1,4 +1,4 @@
-name: ImmortalWrt 25.12.2 - HiWiFi C526A v10 Validation
+name: ImmortalWrt 25.12.2 - HiWiFi C526A v11 Wireless Validation
 
 on:
   workflow_dispatch:
@@ -42,7 +42,7 @@ jobs:
       - name: Upload factory UBI and sysupgrade images
         uses: actions/upload-artifact@v4
         with:
-          name: immortalwrt-v25.12.2-hiwifi-c526a-v10-validation
+          name: immortalwrt-v25.12.2-hiwifi-c526a-v11-wireless-validation
           if-no-files-found: error
           path: |
             immortalwrt/bin/targets/ipq40xx/generic/*hiwifi_c526a*factory.ubi

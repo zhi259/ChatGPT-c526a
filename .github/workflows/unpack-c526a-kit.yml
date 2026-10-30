@@ -65,6 +65,8 @@ jobs:
           rm -f \
             rootfs-overlay/www/luci-static/resources/view/status/include/29_c526a_traffic.js \
             rootfs-overlay/usr/libexec/rpcd/luci.c526a_traffic \
+            rootfs-overlay/www/luci-static/resources/view/status/include/28_c526a_temp.js \
+            rootfs-overlay/usr/libexec/rpcd/luci.c526a_temp \
             scripts/patch-temp-widget.py
           rm -rf package/luci-app-c526a-wizard
           echo '解压后的仓库文件：'
@@ -85,5 +87,5 @@ jobs:
             echo '没有新的解压文件需要提交。'
             exit 0
           fi
-          git commit -m 'Update C526A v10 build kit'
+          git commit -m 'Update C526A v11 build kit'
           git push origin "HEAD:${BRANCH_NAME}"

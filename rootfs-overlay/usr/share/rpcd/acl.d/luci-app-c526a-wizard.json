@@ -1,18 +1,13 @@
 {
   "luci-app-c526a-wizard": {
-    "description": "Grant read-only wireless temperature access and C526A setup/guest Wi-Fi configuration",
+    "description": "Grant C526A setup and guest Wi-Fi configuration",
     "read": {
       "uci": [
         "network",
         "wireless",
         "dhcp",
         "firewall"
-      ],
-      "ubus": {
-        "luci.c526a_temp": [
-          "getData"
-        ]
-      }
+      ]
     },
     "write": {
       "uci": [

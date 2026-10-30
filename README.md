@@ -1,14 +1,14 @@
-# ImmortalWrt 25.12.2 — HiWiFi C526A v10 Validation build kit
+# ImmortalWrt 25.12.2 — HiWiFi C526A v11 Wireless Validation build kit
 
 本工具包面向极路由 X C526A（Qualcomm IPQ4019，`ipq40xx/generic`），基于 ImmortalWrt `v25.12.2` / Linux 6.12。它是用于 GitHub Actions 编译最终镜像的源码工具包；本地没有完成完整交叉编译，因此不能把它当成已编译固件。
 
-## v10 改动记录
+## v10 基础与 v11 改动记录
 
-GitHub Actions 曾连续报告向导的 Makefile 虽然存在，但 `luci-app-c526a-wizard` 未进入 `tmp/.packageinfo`，导致 `make defconfig` 删除对应配置项。该向导仅包含 LuCI JavaScript 页面、菜单/ACL JSON 与 shell RPC 后端，并不需要单独编译成软件包。本版彻底取消向导的软件包选择和 feed 索引依赖，改为通过 OpenWrt 标准 `files/` rootfs overlay 安装这些运行时文件，并在镜像生成后检查各文件确实存在且 RPC 后端可执行。温度显示改为 rootfs overlay 中的只读组件，不再依赖独立温度预警软件包。
+GitHub Actions 曾连续报告向导的 Makefile 虽然存在，但 `luci-app-c526a-wizard` 未进入 `tmp/.packageinfo`，导致 `make defconfig` 删除对应配置项。C526A 快速设置向导和访客 Wi-Fi 仅包含 LuCI JavaScript 页面、菜单和 ACL JSON，不需要单独编译成软件包。本版通过 OpenWrt 标准 `files/` rootfs overlay 安装这些文件；无线温度继续由顶部温度栏读取 `/sbin/tempinfo`，不再安装重复的独立概况温度卡片或专用温度 RPC 后端。
 
-## v10 本次变更
+## 原有功能与本次界面调整
 
-- LuCI 状态 → 概览使用轻量只读无线温度组件；仅在驱动确实向 hwmon 注册有效读数时显示 MT7615E 2.4 GHz 与两颗 QCA4019 5 GHz 温度。移除温度预警/阈值设置插件与 WAN 实时速率组件。
+- 移除概览页重复的独立「无线温度」板块；保留现有顶部温度栏使用的 `/sbin/tempinfo`，继续显示能够从 hwmon 正常读取的 MT7615E 2.4 GHz 与两颗 QCA4019 5 GHz 温度。温度预警/阈值设置插件与 WAN 实时速率组件继续移除。
 - 默认首次启动 LAN 地址改为 `192.168.5.1/24`，DHCP 默认池沿用 ImmortalWrt 默认值；用户已经自定义的非默认 LAN 地址不会被覆盖。
 - 首次启动安全补齐 LAN→WAN 转发和 WAN masquerading 设置，以避免路由器本机能上网、LAN 客户端却不能上网的常见配置问题。
 - 保留 Linux 6.12 DSA 的 `lan2`、`lan3`、`lan4` 与 `wan` 接口映射、MAC/校准数据处理、专用 QCA4019 BDF 校验和 NAND sysupgrade 支持。
@@ -26,8 +26,8 @@ GitHub Actions 曾连续报告向导的 Makefile 虽然存在，但 `luci-app-c5
 
 1. 解压 ZIP，检查里面的顶层目录 `c526a-immortalwrt-kit/`。
 2. 将 ZIP 上传到现有 GitHub 仓库根目录并命名为 `c526a-immortalwrt-kit.zip`（替换原同名 ZIP）；当前仓库的 `unpack-c526a-kit.yml` 会把目录内容解压/提交。
-3. 等解压工作流完成后，打开 Actions，手动运行 **ImmortalWrt 25.12.2 - HiWiFi C526A v10 Validation**。如果解压后的 `.config`、`files/`、`scripts/` 已提交，路径触发也会自动启动构建。
-4. 等 Actions 完成后下载 Artifact `immortalwrt-v25.12.2-hiwifi-c526a-v10-validation`。成功的 Artifact 应包含 `factory.ubi`、`sysupgrade.bin`、`sha256sums` 和 `source-info.txt`。
+3. 等解压工作流完成后，打开 Actions，手动运行 **ImmortalWrt 25.12.2 - HiWiFi C526A v11 Wireless Validation**。如果解压后的 `.config`、`files/`、`scripts/` 已提交，路径触发也会自动启动构建。
+4. 等 Actions 完成后下载 Artifact `immortalwrt-v25.12.2-hiwifi-c526a-v11-wireless-validation`。成功的 Artifact 应包含 `factory.ubi`、`sysupgrade.bin`、`sha256sums` 和 `source-info.txt`。
 5. 首次刷机前备份原厂分区、ART 校准数据和配置；首次安装与系统内升级请使用正确的镜像格式。若要验证全新 LAN 默认配置，升级时不要保留旧设置。
 
 
@@ -42,9 +42,9 @@ ssh root@192.168.1.1 'sh /tmp/fix-running-router.sh'
 
 如果路由器管理地址不同，请把命令中的 `192.168.1.1` 换成当前地址。
 
-## 概况页无线温度
+## 顶部温度栏
 
-概况页只读显示 hwmon 可读取的无线温度，每 10 秒刷新，不含预警阈值或 WAN 实时速率卡片。若 2.4 GHz 温度缺失，先检查 `mt7615_phy0` 是否在 `/sys/class/hwmon/` 注册；前端组件不能替代驱动/PCIe 恢复。
+保留固件现有顶部温度栏的数据来源 `/sbin/tempinfo`。该脚本按设备路径读取 hwmon 中实际可用的无线温度：MT7615E 2.4 GHz 与两颗 QCA4019 5 GHz 模块。v11 删除 v10 额外增加的独立「无线温度」概况板块、对应 LuCI JavaScript 和 rpcd 后端，避免同一组温度重复显示。若 2.4 GHz 温度缺失，应先检查 `mt7615_phy0` 与 MT7615E 初始化状态，而不是新增另一个界面组件。
 ## 快速网络设置向导
 
 首次登录后，打开「网络 → 快速设置向导」即可完成基础设置：
@@ -80,7 +80,7 @@ ssh root@192.168.1.1 'sh /tmp/fix-running-router.sh'
 
 - C526A 专用 QCA4019 BDF 必须为 24,300 字节，且 Git blob SHA-1 为 `ce91af5b144d1238ca4eb35dcfdf34c537f9cc7a`；不一致即让构建失败。
 - v25.12.2 的 PassWall Xray-core 固定为 `26.7.28`，SHA-256 为 `a9afe86349c7bd3e6cae60125e62a5ada09d102e1a2760623e77c24a84dbfb46`，以兼容当期 Go 1.26.x 工具链。
-- 最终构建会检查关键包出现在固件 manifest，并要求同时生成 `factory.ubi` 和 `sysupgrade.bin`；编译完成后还会检查无线温度组件的前端文件、可执行 RPC 后端、温度摘要以及访客 Wi-Fi 页面确实存在于镜像 rootfs。构建 Artifact 还包含 Liquid Formula 的启发式未翻译字符串审计报告。
+- 最终构建会检查关键包出现在固件 manifest，并要求同时生成 `factory.ubi` 和 `sysupgrade.bin`；编译完成后还会检查顶部温度摘要 `/sbin/tempinfo` 与访客 Wi-Fi 页面确实存在于镜像 rootfs，并确认重复的独立无线温度板块及其 RPC 后端未被打入固件。构建 Artifact 还包含 Liquid Formula 的启发式未翻译字符串审计报告。
 
 ## 上游依据
 
@@ -113,11 +113,18 @@ The image config explicitly enables `kmod-nft-socket`, `kmod-nft-tproxy`, their 
 为避免重复触发 OpenWrt 包索引问题，C526A 快速设置向导、访客 Wi-Fi 页面、概览无线温度页面、rpcd 后端、LuCI 菜单和 ACL 统一放入 `rootfs-overlay/`，由标准 rootfs `files/` 机制安装，不再定义或选择 `luci-app-c526a-wizard` 这个独立 APK 包。温度概况页面也是 overlay 文件，不依赖独立温度预警 APK。
 
 
-## v10 已知限制与无线恢复机制
+## v10 实机验证与 v11 变更
 
-- 固化 `Vfac_mac` 不带尾随空格的读取方式。
-- C526A MT7615 节点合并到 Linux 6.12 已有的 `&pcie0 { pcie@0 { ... } }` 根端口分支，端点命名为 `wifi@0,0`，`reg = <0x00010000 0 0 0 0>` 对应 PCI BDF `0000:01:00.0`；这是待编译和实机验证的候选 DTS 修正，不代表 EEPROM 已确认从 Factory 读取。
-- 概况页使用只读 hwmon 温度卡片；`luci-app-temp` 预警插件和 WAN 实时速率卡片已从本次配置中移除。若驱动没有注册温度传感器，界面会提示未检测到传感器，而不会伪造读数。
-- `/etc/init.d/mt7615_reboot` 由首次启动的 `90-c526a-enable-mt7615-reboot` 启用。它会在关机/重启阶段尝试卸载 `mt7615e`，这是 OpenWrt/mt76 社区针对 IPQ4019 + MT7615 热重启后固件状态异常的已报告 workaround；启动时仅对缺失的 `0000:01:00.0` 做有限次数 PCI rescan，只有设备存在 `of_node` 时才尝试 `modprobe mt7615e`。如果模块仍被占用而无法卸载，脚本会记日志，不能保证热重启问题一定解决。它不写 Factory/ART/EEPROM，也不设置发射功率。
-- Liquid Formula 翻译脚本会翻译词典覆盖的 UI 字符串；构建同时生成启发式待翻译审计报告。由于上游 `main` 分支可更新，尚不能保证所有上游新字符串均已汉化。
-- 本工具包尚未在本环境执行完整交叉编译，也未在 C526A 实机验证 DTS/温度/发射功率。固件生成并刷机后仍需按清单验证。
+- MAC 读取已在 v10 实机确认正常，统一使用 `mtd_get_mac_ascii bdinfo "Vfac_mac"`，不带尾随空格。
+- v10 实机 `/sys/bus/pci/devices/0000:01:00.0/of_node` 指向 `.../pcie@40000000/pcie@0/wifi@0,0`；DTS `reg` 对应 PCI BDF `0000:01:00.0`。`mediatek,mtd-eeprom` phandle `0x14` 已确认指向 Factory 分区 `partition@1c0000`，偏移为 0，Factory 开头为 `15 76 ...`。这确认设备树引用关系，但尚未直接读取驱动最终使用的 EEPROM 缓冲区。
+- v10 的 MT7615 重启服务已通过一次正常软重启测试：持久日志记录关机阶段成功卸载 `mt7615e`，启动阶段重新绑定成功，内核出现 N9/CR4 firmware version，2.4 GHz 恢复在信道 1；未再次出现 `Firmware is not ready for download`。一次通过不等于长期稳定性保证，建议按无线测试指南继续重复验证。
+- 断电恢复后，`mt7615_phy0` hwmon 读数为 31°C；软重启失败时该温度输入为空。当前保留顶部温度栏的 `/sbin/tempinfo`，不再额外安装 v10 重复增加的独立「无线温度」概况板块及其 RPC 后端。
+- MT7615 关机阶段尝试卸载 `mt7615e`，不写 Factory/ART/EEPROM，也不设置发射功率。启动阶段只对缺失的 PCI 设备做有限次数 rescan，并要求 `of_node` 存在才尝试加载驱动。
+- Liquid Formula 翻译脚本覆盖词典中的 UI 字符串，并生成启发式待翻译报告；由于上游 `main` 分支可更新，尚不能保证所有新增字符串均已汉化。
+- v11 未在本环境完成完整交叉编译；GitHub Actions 成功与固件刷机测试后，才能确认 v11 镜像和新增 UI 清理正常。
+- WAN DHCP 曾因网线两端接触问题未获地址；重新插接后恢复，现阶段不改 WAN、DSA/VLAN 或防火墙配置。
+
+
+## v11 无线稳定性与速率测试
+
+正式刷写前/后建议按 `docs/C526A-wireless-test.md` 分别隔离并测试 MT7615E 2.4 GHz（`phy0`）、QCA4019 5 GHz（`phy1`，默认信道 149）和 QCA4019 5 GHz（`phy2`，默认信道 36）。测试时用有线 LAN 设备运行 `iperf3 -s`，无线客户端连接后运行 TCP 正向/反向吞吐与本地网关 ping；路由器端用 `iw dev <无线接口> station dump` 确认客户端实际关联到目标 PHY。
