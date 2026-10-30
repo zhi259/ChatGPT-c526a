@@ -5,6 +5,8 @@ KIT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE="${GITHUB_WORKSPACE:-$(cd "$KIT_DIR/.." && pwd)}"
 SOURCE_DIR="${SOURCE_DIR:-$WORKSPACE/immortalwrt}"
 
+bash "$KIT_DIR/scripts/validate-kit.sh"
+
 : > "$WORKSPACE/source-info.txt"
 if [[ ! -d "$SOURCE_DIR/.git" ]]; then
 	git clone --depth 1 --branch v25.12.2 https://github.com/immortalwrt/immortalwrt.git "$SOURCE_DIR"
@@ -20,6 +22,13 @@ WIZARD_OVERLAY="$KIT_DIR/rootfs-overlay"
 for rel in \
     www/luci-static/resources/view/c526a/wizard.js \
     www/luci-static/resources/view/c526a/guestwifi.js \
+    www/luci-static/resources/view/liquid-formula/overview.js \
+    www/luci-static/resources/view/liquid-formula/fakehttp.js \
+    www/luci-static/resources/view/liquid-formula/fakesip.js \
+    www/luci-static/resources/view/liquid-formula/customlogo.js \
+    usr/libexec/rpcd/liquid_formula \
+    usr/share/rpcd/acl.d/luci-app-liquid-formula.json \
+    usr/share/luci/menu.d/luci-app-liquid-formula.json \
     usr/share/rpcd/acl.d/luci-app-c526a-wizard.json \
     usr/share/luci/menu.d/luci-app-c526a-wizard.json \
     sbin/tempinfo \
@@ -37,6 +46,7 @@ rm -f \
 cp -a "$WIZARD_OVERLAY/." "$SOURCE_DIR/files/"
 chmod 0755 "$SOURCE_DIR/files/sbin/tempinfo"
 chmod 0755 "$SOURCE_DIR/files/lib/upgrade/c526a-mt7615-sysupgrade"
+chmod 0755 "$SOURCE_DIR/files/usr/libexec/rpcd/liquid_formula"
 # Remove stale package copies; the wizard is an overlay, not a separate APK package.
 rm -rf "$SOURCE_DIR/package/luci-app-c526a-wizard" \
     "$SOURCE_DIR/package/feeds/c526a_local/luci-app-c526a-wizard"
@@ -172,6 +182,7 @@ for symbol in \
     CONFIG_PACKAGE_luci-app-passwall_Nftables_Transparent_Proxy \
     CONFIG_PACKAGE_luci-app-passwall_INCLUDE_SingBox \
     CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray \
+    CONFIG_PACKAGE_luci-compat \
     CONFIG_PACKAGE_kmod-nft-socket \
     CONFIG_PACKAGE_kmod-nft-tproxy \
     CONFIG_PACKAGE_kmod-nf-socket \
@@ -253,6 +264,34 @@ if grep -Eq 'C526A 快速设置向导|C526A 访客 Wi-Fi' "$ROOTFS_DIR/usr/share
     echo "ERROR: old C526A-prefixed menu titles remain in the staged rootfs" >&2
     exit 1
 fi
+
+# Verify the exact Liquid Formula UI snapshot, menu/ACL and rpcd executable are in the image.
+for view in overview fakehttp fakesip customlogo; do
+    [[ -s "$ROOTFS_DIR/www/luci-static/resources/view/liquid-formula/$view.js" ]] || {
+        echo "ERROR: Liquid Formula $view LuCI view is missing from the image rootfs" >&2
+        exit 1
+    }
+done
+[[ -x "$ROOTFS_DIR/usr/libexec/rpcd/liquid_formula" ]] || {
+    echo "ERROR: Liquid Formula rpcd backend is missing or not executable in the image rootfs" >&2
+    exit 1
+}
+[[ -f "$ROOTFS_DIR/usr/share/rpcd/acl.d/luci-app-liquid-formula.json" ]] || {
+    echo "ERROR: Liquid Formula rpcd ACL is missing from the image rootfs" >&2
+    exit 1
+}
+[[ -f "$ROOTFS_DIR/usr/share/luci/menu.d/luci-app-liquid-formula.json" ]] || {
+    echo "ERROR: Liquid Formula LuCI menu definition is missing from the image rootfs" >&2
+    exit 1
+}
+grep -Fq '默认管理地址为 192.168.5.1。' "$ROOTFS_DIR/www/luci-static/resources/view/c526a/wizard.js" || {
+    echo "ERROR: requested LAN address example did not make it into the image" >&2
+    exit 1
+}
+grep -Fq 'HiWiFi-X' "$ROOTFS_DIR/www/luci-static/resources/view/c526a/guestwifi.js" || {
+    echo "ERROR: guest Wi-Fi default SSID did not make it into the image" >&2
+    exit 1
+}
 
 IMAGE_DIR="bin/targets/ipq40xx/generic"
 MANIFEST="$(find "$IMAGE_DIR" -maxdepth 1 -type f -name '*.manifest' -print -quit)"

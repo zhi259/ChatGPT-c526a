@@ -96,7 +96,7 @@ return view.extend({
 		var keyPresent = names.some(function(name) { return !!uci.get('wireless', name, 'key'); });
 		var lanIP = uci.get('network', 'lan', 'ipaddr') || '192.168.5.1';
 		var guestIP = uci.get('network', 'guest', 'ipaddr') || '192.168.6.1';
-		var guestSSID = names.map(function(name) { return uci.get('wireless', name, 'ssid'); }).filter(Boolean)[0] || 'C526A-Guest';
+		var guestSSID = names.map(function(name) { return uci.get('wireless', name, 'ssid'); }).filter(Boolean)[0] || 'HiWiFi-X';
 		var radioDefaults = [ 'radio0', 'radio1', 'radio2' ].map(function(radio, i) {
 			return present[i] ? uci.get('wireless', names[i], 'disabled') !== '1' : uci.get('wireless', radio, 'disabled') !== '1';
 		});
@@ -110,7 +110,7 @@ return view.extend({
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', {}, _('基本设置')),
 				checkField('c526a_guest_enabled', _('启用访客 Wi-Fi'), active),
-				inputField('c526a_guest_ssid', _('访客 Wi-Fi 名称'), guestSSID, 'text', _('例如 C526A-Guest；最多 32 个字符')),
+				inputField('c526a_guest_ssid', _('访客 Wi-Fi 名称'), guestSSID, 'text', _('例如 HiWiFi-X；最多 32 个字符')),
 				inputField('c526a_guest_key', _('访客 Wi-Fi 密码'), '', 'password', keyPresent ? _('留空则保留现有密码；填写后将修改密码') : _('首次启用请设置 8–63 位可打印 ASCII 密码')),
 				inputField('c526a_guest_ip', _('访客网络网关地址'), guestIP, 'text', '192.168.6.1'),
 				E('p', { 'class': 'cbi-section-descr' }, _('子网掩码固定为 255.255.255.0。访客网络使用独立防火墙区域，只允许 DNS、DHCP 和访问 WAN。'))
@@ -262,7 +262,7 @@ return view.extend({
 			uci.set('wireless', item.id, 'device', item.radio);
 			uci.set('wireless', item.id, 'mode', 'ap');
 			uci.set('wireless', item.id, 'network', 'guest');
-			uci.set('wireless', item.id, 'ssid', ssid || 'C526A-Guest');
+			uci.set('wireless', item.id, 'ssid', ssid || 'HiWiFi-X');
 			uci.set('wireless', item.id, 'encryption', 'psk2');
 			uci.set('wireless', item.id, 'isolate', '1');
 			uci.set('wireless', item.id, 'disabled', enable && bandOn ? '0' : '1');
