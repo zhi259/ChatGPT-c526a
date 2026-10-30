@@ -22,7 +22,8 @@ for rel in \
     www/luci-static/resources/view/c526a/guestwifi.js \
     usr/share/rpcd/acl.d/luci-app-c526a-wizard.json \
     usr/share/luci/menu.d/luci-app-c526a-wizard.json \
-    sbin/tempinfo; do
+    sbin/tempinfo \
+    lib/upgrade/c526a-mt7615-sysupgrade; do
     [[ -f "$WIZARD_OVERLAY/$rel" ]] || {
         echo "ERROR: required C526A LuCI overlay file is missing: $WIZARD_OVERLAY/$rel" >&2
         exit 1
@@ -35,6 +36,7 @@ rm -f \
     "$SOURCE_DIR/files/usr/libexec/rpcd/luci.c526a_temp"
 cp -a "$WIZARD_OVERLAY/." "$SOURCE_DIR/files/"
 chmod 0755 "$SOURCE_DIR/files/sbin/tempinfo"
+chmod 0755 "$SOURCE_DIR/files/lib/upgrade/c526a-mt7615-sysupgrade"
 # Remove stale package copies; the wizard is an overlay, not a separate APK package.
 rm -rf "$SOURCE_DIR/package/luci-app-c526a-wizard" \
     "$SOURCE_DIR/package/feeds/c526a_local/luci-app-c526a-wizard"
@@ -147,6 +149,16 @@ for pkgdir in \
 done
 
 bash "$KIT_DIR/scripts/apply-c526a.sh" "$SOURCE_DIR"
+# Patch the exact ImmortalWrt 25.12.2 sysupgrade entry point used by both LuCI and CLI.
+python3 "$KIT_DIR/scripts/patch-sysupgrade-c526a.py" "$SOURCE_DIR"
+grep -Fq '# C526A MT7615E sysupgrade pre-hook' "$SOURCE_DIR/package/base-files/files/sbin/sysupgrade" || {
+    echo "ERROR: C526A MT7615E sysupgrade pre-hook was not installed" >&2
+    exit 1
+}
+[[ -x "$SOURCE_DIR/files/lib/upgrade/c526a-mt7615-sysupgrade" ]] || {
+    echo "ERROR: C526A MT7615E sysupgrade helper is missing or not executable" >&2
+    exit 1
+}
 cp "$KIT_DIR/.config" .config
 make defconfig
 # These kernel modules must be part of this exact custom kernel build. Never rely on
@@ -215,6 +227,14 @@ done
 }
 [[ -f "$ROOTFS_DIR/usr/share/luci/menu.d/luci-app-c526a-wizard.json" ]] || {
     echo "ERROR: C526A LuCI menu definition is missing from the image rootfs" >&2
+    exit 1
+}
+[[ -x "$ROOTFS_DIR/lib/upgrade/c526a-mt7615-sysupgrade" ]] || {
+    echo "ERROR: C526A MT7615E sysupgrade pre-hook helper is missing or not executable" >&2
+    exit 1
+}
+grep -Fq '# C526A MT7615E sysupgrade pre-hook' "$ROOTFS_DIR/sbin/sysupgrade" || {
+    echo "ERROR: final rootfs /sbin/sysupgrade does not contain the C526A MT7615E pre-hook" >&2
     exit 1
 }
 [[ -x "$ROOTFS_DIR/sbin/tempinfo" ]] || {

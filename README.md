@@ -15,6 +15,7 @@ GitHub Actions 曾连续报告向导的 Makefile 虽然存在，但 `luci-app-c5
 
 - 保留 `/sbin/tempinfo` 只读诊断命令，按设备路径输出可读取的无线温度；它只读取 hwmon，不重启驱动、不修改校准数据。
 - 增加启动期 MT7615E 检查：仅在 PCI 设备缺失时有限次数 rescan；仅在 `of_node` 存在时尝试加载驱动，不执行无条件 `rmmod`。
+- 本次 v11 同版本修订补齐 Web/CLI `sysupgrade` 专用预处理：在镜像校验和配置备份完成后、procd 接管升级之前，仅关闭 `radio0` 并有限次数卸载 `mt7615e`；两个 5 GHz radio 不处理。若模块仍无法卸载，会尝试恢复 2.4 GHz 并中止刷写，避免在未完成 MT7615 预卸载时继续升级。该机制仍需在 C526A 上通过下一次 Web 升级实测确认。
 - 首次初始化时，若 radio1 仍使用会导致 AP 启动失败的默认信道 100，则自动改为实机验证可用的 149（VHT80）；已有其他信道设置不会被覆盖。
 - 菜单和页面标题改为「快速设置向导」与「访客 Wi-Fi」，移除前缀 `C526A`。
 - Liquid Formula LuCI 界面增加常用标签的简体中文替换，并附带《Liquid Formula 使用说明》安装到 `/usr/share/doc/c526a/`。上游未覆盖到的新增提示文字仍可能保留英文。
@@ -110,7 +111,7 @@ ssh root@192.168.1.1 'sh /tmp/fix-running-router.sh'
 The image config explicitly enables `kmod-nft-socket`, `kmod-nft-tproxy`, their `kmod-nf-socket` / `kmod-nf-tproxy` dependencies, plus `kmod-tun`, `kmod-inet-diag`, and `kmod-netlink-diag` for the selected PassWall cores. `scripts/build.sh` checks after `make defconfig` that these selections survive. Keep these kernel modules in the same image as the custom kernel; do not install kmods from a different build's feed, even if the displayed kernel version number looks identical, because kernel ABI hashes can differ.
 ### 向导的安装方式（overlay）
 
-为避免重复触发 OpenWrt 包索引问题，C526A 快速设置向导、访客 Wi-Fi 页面、概览无线温度页面、rpcd 后端、LuCI 菜单和 ACL 统一放入 `rootfs-overlay/`，由标准 rootfs `files/` 机制安装，不再定义或选择 `luci-app-c526a-wizard` 这个独立 APK 包。温度概况页面也是 overlay 文件，不依赖独立温度预警 APK。
+为避免重复触发 OpenWrt 包索引问题，C526A 快速设置向导、访客 Wi-Fi 页面及其 rpcd 后端、LuCI 菜单和 ACL，以及顶部温度栏使用的 `/sbin/tempinfo`，统一放入 `rootfs-overlay/`，由标准 rootfs `files/` 机制安装，不再定义或选择 `luci-app-c526a-wizard` 这个独立 APK 包。v11 已移除重复的独立无线温度概况板块及其专用 RPC 后端；顶部温度栏仍通过 `/sbin/tempinfo` 读取 hwmon。
 
 
 ## v10 实机验证与 v11 变更
@@ -121,9 +122,27 @@ The image config explicitly enables `kmod-nft-socket`, `kmod-nft-tproxy`, their 
 - 断电恢复后，`mt7615_phy0` hwmon 读数为 31°C；软重启失败时该温度输入为空。当前保留顶部温度栏的 `/sbin/tempinfo`，不再额外安装 v10 重复增加的独立「无线温度」概况板块及其 RPC 后端。
 - MT7615 关机阶段尝试卸载 `mt7615e`，不写 Factory/ART/EEPROM，也不设置发射功率。启动阶段只对缺失的 PCI 设备做有限次数 rescan，并要求 `of_node` 存在才尝试加载驱动。
 - Liquid Formula 翻译脚本覆盖词典中的 UI 字符串，并生成启发式待翻译报告；由于上游 `main` 分支可更新，尚不能保证所有新增字符串均已汉化。
-- v11 未在本环境完成完整交叉编译；GitHub Actions 成功与固件刷机测试后，才能确认 v11 镜像和新增 UI 清理正常。
+- v11 原版未在本环境完成完整交叉编译；本次保持 v11 版本号的修订加入了 ImmortalWrt 25.12.2 `/sbin/sysupgrade` 预升级 hook。该 hook 在 `install_bin /sbin/upgraded` 之前运行，调用 `/lib/upgrade/c526a-mt7615-sysupgrade`；LuCI Backup/Flash Firmware 与命令行均通过 `/sbin/sysupgrade`，因此会走同一入口。此处依据 v25.12.2 上游源码插入，不使用该版本中不存在的 `platform_pre_upgrade` 调用点。
+- sysupgrade 预卸载日志（overlay 可写时）写入 `/overlay/c526a-mt7615-sysupgrade.log`，同时写入系统日志。若卸载失败，hook 会尝试 `wifi up radio0` 并返回非零，使升级在实际刷写前退出。下一次升级后应检查该日志、`dmesg` 中 N9/CR4 固件版本，以及 `iwinfo phy0-ap0 info`；当前仍未实测验证这条新 hook。
 - WAN DHCP 曾因网线两端接触问题未获地址；重新插接后恢复，现阶段不改 WAN、DSA/VLAN 或防火墙配置。
 
+
+## v11 Web 固件升级前 MT7615E 处理（同版本修订）
+
+ImmortalWrt 25.12.2 的 `/sbin/sysupgrade` 在镜像检查、配置备份之后会复制 `/sbin/upgraded`，再通过 ubus 把升级交给 procd。该流程不保证执行旧式 init 脚本的 `K60` 停止阶段，因此仅有 `/etc/init.d/mt7615_reboot stop()` 不足以覆盖 Web 刷机。
+
+本修订由 `scripts/patch-sysupgrade-c526a.py` 对上游 `package/base-files/files/sbin/sysupgrade` 做唯一锚点补丁，在 `install_bin /sbin/upgraded` 前调用 `/lib/upgrade/c526a-mt7615-sysupgrade`。该辅助脚本仅对 `hiwifi,c526a` 生效：执行 `wifi down radio0`、等待接口释放并最多三次尝试 `rmmod mt7615e`；不关闭 `radio1/radio2`，不写 Factory/ART/EEPROM，不设定发射功率。若卸载失败，会尝试重新启用 `radio0` 并让 sysupgrade 退出，不继续刷写。
+
+该机制尚未经过本机完整编译及下一次 C526A Web 升级实测。升级前请保留有线管理连接；升级后检查：
+
+```sh
+cat /overlay/c526a-mt7615-sysupgrade.log 2>/dev/null
+logread | grep -i c526a-sysupgrade
+dmesg | grep -iE 'mt7615|N9 Firmware|CR4 Firmware|Firmware is not ready' | tail -n 60
+iwinfo phy0-ap0 info
+```
+
+预期日志包含 `Successfully unloaded mt7615e before sysupgrade`，启动日志应出现 N9/CR4 firmware 版本，且 `phy0-ap0` 应有正常信道与非零 Tx-Power。若卸载失败，固件升级会中止，设备仍应保持在旧系统并尝试恢复 2.4 GHz。
 
 ## v11 无线稳定性与速率测试
 

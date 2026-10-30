@@ -1,0 +1,101 @@
+#!/bin/sh
+# C526A-only MT7615E shutdown hook for ImmortalWrt 25.12 sysupgrade.
+# Called by the patched /sbin/sysupgrade after image validation/config backup,
+# but before procd takes over and replaces PID 1 with /sbin/upgraded.
+# Does not touch Factory/ART/EEPROM or alter TX power.
+
+TAG="c526a-sysupgrade"
+LOG_FILE="/overlay/c526a-mt7615-sysupgrade.log"
+STATE_FILE="/tmp/c526a-mt7615-sysupgrade-unloaded"
+PCI_DEV="/sys/bus/pci/devices/0000:01:00.0"
+
+log() {
+    local msg="$*"
+    logger -t "$TAG" "$msg"
+    if [ -d /overlay ] && [ -w /overlay ]; then
+        printf '%s %s\n' "$(date '+%F %T' 2>/dev/null || date)" "$msg" >> "$LOG_FILE" 2>/dev/null || true
+        sync
+    fi
+}
+
+board="$(cat /tmp/sysinfo/board_name 2>/dev/null)"
+if [ -z "$board" ]; then
+    . /lib/functions/system.sh 2>/dev/null || {
+        log 'ERROR: cannot load board identification; refusing sysupgrade without MT7615 pre-unload'
+        exit 1
+    }
+    board="$(board_name)"
+fi
+[ "$board" = "hiwifi,c526a" ] || exit 0
+
+# If the procd/upgraded handoff unexpectedly returns, restore the radio before
+# returning control to the user. A successful handoff replaces PID 1 and never
+# reaches this recovery path.
+if [ "$1" = "--restore" ]; then
+    [ -f "$STATE_FILE" ] || exit 0
+    log 'sysupgrade handoff returned; attempting to restore MT7615E and radio0'
+    if modprobe mt7615e 2>/dev/null; then
+        sleep 2
+        if [ -x /sbin/wifi ]; then
+            /sbin/wifi up radio0 >/dev/null 2>&1 || true
+        fi
+        rm -f "$STATE_FILE"
+        log 'MT7615E restore attempt completed after sysupgrade handoff failure'
+        exit 0
+    fi
+    log 'ERROR: failed to reload mt7615e after sysupgrade handoff failure'
+    exit 1
+fi
+
+if ! grep -q '^mt7615e ' /proc/modules 2>/dev/null; then
+    log 'MT7615E module is not loaded; sysupgrade pre-hook has nothing to unload'
+    exit 0
+fi
+
+log 'Starting C526A MT7615E sysupgrade shutdown hook'
+
+if [ ! -d "$PCI_DEV" ]; then
+    log 'WARNING: PCI function 0000:01:00.0 is absent while mt7615e is loaded; attempting module unload anyway'
+fi
+if [ ! -e "$PCI_DEV/of_node" ]; then
+    log 'WARNING: MT7615E PCI function has no of_node; unload only, no calibration data will be changed'
+fi
+
+# Bring down only the MT7615 radio. The two IPQ4019 5 GHz radios are untouched.
+if [ -x /sbin/wifi ]; then
+    /sbin/wifi down radio0 >/dev/null 2>&1
+    wifi_rc=$?
+    log "wifi down radio0 returned $wifi_rc"
+    sleep 2
+else
+    log 'WARNING: /sbin/wifi is unavailable; attempting direct mt7615e unload'
+fi
+
+# A few bounded attempts allow netifd/mac80211 to release the PCI driver.
+attempt=1
+while [ "$attempt" -le 3 ]; do
+    if ! grep -q '^mt7615e ' /proc/modules 2>/dev/null; then
+        log 'MT7615E was already unloaded by the wireless teardown'
+        exit 0
+    fi
+
+    if rmmod mt7615e 2>/dev/null; then
+        if ! grep -q '^mt7615e ' /proc/modules 2>/dev/null; then
+            : > "$STATE_FILE"
+            log "Successfully unloaded mt7615e before sysupgrade (attempt $attempt)"
+            sync
+            exit 0
+        fi
+    fi
+
+    log "WARNING: rmmod mt7615e failed or module remains loaded (attempt $attempt/3)"
+    sleep 1
+    attempt=$((attempt + 1))
+done
+
+log 'ERROR: unable to unload mt7615e; aborting sysupgrade to avoid repeating the known warm-upgrade failure'
+# The flash has not started yet. Restore 2.4 GHz service when possible.
+if [ -x /sbin/wifi ]; then
+    /sbin/wifi up radio0 >/dev/null 2>&1 || true
+fi
+exit 1

@@ -1,4 +1,4 @@
-# Source notes — C526A v11 Wireless Validation
+# Source notes — C526A v11 Wireless Validation (sysupgrade-pre-unload revision)
 
 - ImmortalWrt base: tag `v25.12.2` (Linux 6.12 target for ipq40xx).
 - C526A port reference: `coolsnowwolf/lede` commit `2f74b3efffd5b1929d5a31d76e763b927aebf759`.
@@ -11,3 +11,5 @@
 Upstream repos that use mutable `main` branches may advance. The workflow records the checked-out commits where supported. This kit has not been fully cross-compiled locally; a successful GitHub Actions run is required to produce verified firmware images.
 - MT7615 DTS: candidate Linux 6.12 `&pcie0 { pcie@0 { wifi@0,0 } }` endpoint layout; must be validated on the actual C526A before considering EEPROM/power issue fixed.
 - MT7615 reboot recovery: v10 was tested once on the C526A; persistent overlay log confirmed `mt7615e` unloaded during shutdown, rebound on boot, firmware initialized, and 2.4 GHz returned on channel 1. This is one successful test, not a guarantee across repeated cycles. No calibration writes or TX-power overrides are used.
+
+- v11 same-version sysupgrade fix: patch the ImmortalWrt `v25.12.2` `package/base-files/files/sbin/sysupgrade` immediately before `install_bin /sbin/upgraded`; invoke the C526A-only `/lib/upgrade/c526a-mt7615-sysupgrade` helper after validation/backup and before the procd/upgraded handoff. This covers LuCI and CLI because both invoke `/sbin/sysupgrade`. The hook shuts down only `radio0`, makes bounded `rmmod mt7615e` attempts, and aborts flashing (attempting to restore radio0) if unloading fails. This is not yet hardware-tested; check the persistent log after the next upgrade.
