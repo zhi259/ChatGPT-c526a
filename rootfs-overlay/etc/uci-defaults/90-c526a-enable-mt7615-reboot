@@ -1,9 +1,0 @@
-#!/bin/sh
-# Enable C526A MT7615E shutdown/startup workaround on first boot.
-. /lib/functions.sh
-. /lib/functions/system.sh
-
-[ "$(board_name)" = "hiwifi,c526a" ] || exit 0
-[ -x /etc/init.d/mt7615_reboot ] || exit 0
-/etc/init.d/mt7615_reboot enable || exit 0
-exit 0
