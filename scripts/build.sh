@@ -163,6 +163,10 @@ for pkgdir in \
 done
 
 bash "$KIT_DIR/scripts/apply-c526a.sh" "$SOURCE_DIR"
+grep -Fq 'lan) ipad=${ipaddr:-"192.168.5.1"} ;;' "$SOURCE_DIR/package/base-files/files/bin/config_generate" || {
+    echo "ERROR: config_generate does not use 192.168.5.1 as the clean-install LAN fallback" >&2
+    exit 1
+}
 cp "$KIT_DIR/.config" .config
 make defconfig
 # These kernel modules must be part of this exact custom kernel build. Never rely on
@@ -187,6 +191,9 @@ for symbol in \
     CONFIG_PACKAGE_kmod-netlink-diag \
     CONFIG_PACKAGE_liquid-formula \
     CONFIG_PACKAGE_luci-app-liquid-formula \
+    CONFIG_PACKAGE_luci-app-ddns \
+    CONFIG_PACKAGE_luci-proto-ipv6 \
+    CONFIG_PACKAGE_zerotier \
     CONFIG_PACKAGE_luci-theme-argon; do
     if ! grep -qx "${symbol}=y" .config; then
         echo "ERROR: make defconfig did not retain ${symbol}=y; check package discovery and dependencies" >&2
@@ -283,8 +290,8 @@ done
     echo "ERROR: Liquid Formula LuCI menu definition is missing from the image rootfs" >&2
     exit 1
 }
-grep -Fq '默认管理地址为 192.168.5.1。' "$ROOTFS_DIR/www/luci-static/resources/view/c526a/wizard.js" || {
-    echo "ERROR: requested LAN address example did not make it into the image" >&2
+grep -Fq "_('默认管理地址为 ') + currentLanIP" "$ROOTFS_DIR/www/luci-static/resources/view/c526a/wizard.js" || {
+    echo "ERROR: dynamic current LAN address description did not make it into the image" >&2
     exit 1
 }
 grep -Fq 'HiWiFi-X' "$ROOTFS_DIR/www/luci-static/resources/view/c526a/guestwifi.js" || {

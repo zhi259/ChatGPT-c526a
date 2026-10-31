@@ -11,6 +11,24 @@ need_exec() {
 need_file "$KIT_DIR/.config"
 need_file "$KIT_DIR/files/qcom-ipq4019-c526a.dts"
 need_file "$KIT_DIR/scripts/apply-c526a.sh"
+grep -Fq 'package/base-files/files/bin/config_generate' "$KIT_DIR/scripts/apply-c526a.sh" || {
+    echo 'ERROR: apply-c526a.sh does not patch config_generate for the clean-install LAN default' >&2; exit 1;
+}
+grep -Fq '192.168.5.1' "$KIT_DIR/scripts/apply-c526a.sh" || {
+    echo 'ERROR: config_generate default LAN address patch is missing' >&2; exit 1;
+}
+for symbol in \
+    CONFIG_PACKAGE_luci-app-passwall \
+    CONFIG_PACKAGE_luci-app-passwall_INCLUDE_SingBox \
+    CONFIG_PACKAGE_luci-app-ddns \
+    CONFIG_PACKAGE_luci-proto-ipv6 \
+    CONFIG_PACKAGE_zerotier \
+    CONFIG_PACKAGE_luci-theme-argon \
+    CONFIG_PACKAGE_luci-app-liquid-formula; do
+    grep -qx "${symbol}=y" "$KIT_DIR/.config" || {
+        echo "ERROR: required package selection missing from .config: ${symbol}" >&2; exit 1;
+    }
+done
 need_file "$OVERLAY/www/luci-static/resources/view/c526a/wizard.js"
 need_file "$OVERLAY/www/luci-static/resources/view/c526a/guestwifi.js"
 need_file "$OVERLAY/www/luci-static/resources/view/liquid-formula/overview.js"
@@ -33,8 +51,17 @@ for obsolete in \
     }
 done
 
-grep -Fq '默认管理地址为 192.168.5.1。' "$OVERLAY/www/luci-static/resources/view/c526a/wizard.js" || {
-    echo 'ERROR: quick setup wizard LAN description is not the requested 192.168.5.1 text' >&2; exit 1;
+grep -Fq "var currentLanIP = normalizeLanInput(uci.get('network', 'lan', 'ipaddr'));" "$OVERLAY/www/luci-static/resources/view/c526a/wizard.js" || {
+    echo 'ERROR: quick setup wizard does not read the current LAN address from UCI' >&2; exit 1;
+}
+grep -Fq "_('默认管理地址为 ') + currentLanIP + _('。请确认它与上级路由器的网段不冲突。')" "$OVERLAY/www/luci-static/resources/view/c526a/wizard.js" || {
+    echo 'ERROR: quick setup wizard LAN description is not dynamically bound to the current LAN address' >&2; exit 1;
+}
+grep -Fq "field('c526a_lan_ip', _('路由器 LAN 地址（仅填写 IP）'), currentLanIP" "$OVERLAY/www/luci-static/resources/view/c526a/wizard.js" || {
+    echo 'ERROR: wizard LAN input and description do not use the same normalized current address' >&2; exit 1;
+}
+grep -Fq 'lan_ip="${lan_ip%%/*}"' "$OVERLAY/etc/uci-defaults/99-c526a-default-network" || {
+    echo 'ERROR: legacy LAN migration does not normalize CIDR suffixes such as /24' >&2; exit 1;
 }
 grep -Fq 'normalizeLanInput(uci.get' "$OVERLAY/www/luci-static/resources/view/c526a/wizard.js" || {
     echo 'ERROR: wizard LAN input does not normalize legacy/list/CIDR values to a plain IPv4 address' >&2; exit 1;

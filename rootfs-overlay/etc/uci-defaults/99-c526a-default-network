@@ -7,6 +7,8 @@
 [ "$(board_name)" = "hiwifi,c526a" ] || exit 0
 
 lan_ip="$(uci -q get network.lan.ipaddr 2>/dev/null)"
+# UCI may store the legacy default with a CIDR suffix (for example 192.168.1.1/24).
+lan_ip="${lan_ip%%/*}"
 if [ -z "$lan_ip" ] || [ "$lan_ip" = "192.168.1.1" ]; then
     uci -q set network.lan.ipaddr='192.168.5.1'
     uci -q set network.lan.netmask='255.255.255.0'

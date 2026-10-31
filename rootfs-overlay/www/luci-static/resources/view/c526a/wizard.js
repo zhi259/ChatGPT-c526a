@@ -119,6 +119,7 @@ return view.extend({
 		var radios2gOn = uci.get('wireless', 'radio0', 'disabled') !== '1';
 		var radio1On = uci.get('wireless', 'radio1', 'disabled') !== '1';
 		var radio2On = uci.get('wireless', 'radio2', 'disabled') !== '1';
+		var currentLanIP = normalizeLanInput(uci.get('network', 'lan', 'ipaddr'));
 
 		return E('div', { 'class': 'cbi-map' }, [
 			E('h2', {}, _('快速网络设置向导')),
@@ -144,8 +145,8 @@ return view.extend({
 				])
 			]),
 
-			section(_('第 2 步：设置路由器管理地址'), _('默认管理地址为 192.168.5.1。请确认它与上级路由器的网段不冲突。'), [
-				field('c526a_lan_ip', _('路由器 LAN 地址（仅填写 IP）'), normalizeLanInput(uci.get('network', 'lan', 'ipaddr')), 'text', _('例如 192.168.5.1'))
+			section(_('第 2 步：设置路由器管理地址'), _('默认管理地址为 ') + currentLanIP + _('。请确认它与上级路由器的网段不冲突。'), [
+				field('c526a_lan_ip', _('路由器 LAN 地址（仅填写 IP）'), currentLanIP, 'text', _('例如 192.168.5.1'))
 			]),
 
 			section(_('第 3 步：设置 Wi-Fi'), _('建议给 2.4 GHz 和 5 GHz 使用不同的名称，方便识别；两个 5 GHz 无线模块可以使用相同名称和密码。此向导不修改信道和发射功率。'), [

@@ -14,8 +14,33 @@ need_file target/linux/ipq40xx/base-files/etc/board.d/02_network
 need_file target/linux/ipq40xx/base-files/etc/hotplug.d/firmware/11-ath10k-caldata
 need_file target/linux/ipq40xx/base-files/lib/upgrade/platform.sh
 need_file package/firmware/ipq-wifi/Makefile
+need_file package/base-files/files/bin/config_generate
 
 KIT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Change only config_generate's LAN fallback. This makes the clean-install
+# default 192.168.5.1 before any uci-defaults migration script runs.
+python3 - <<'PYLANDEFAULT'
+from pathlib import Path
+import re
+p = Path("package/base-files/files/bin/config_generate")
+s = p.read_text()
+pattern = re.compile(r'(?m)^([\t ]*lan\) ipad=\$\{ipaddr:-\")192\.168\.1\.1(\"\} ;;[\t ]*)$')
+if 'lan) ipad=${ipaddr:-"192.168.5.1"} ;;' in s:
+    print("config_generate LAN default already set to 192.168.5.1")
+else:
+    matches = list(pattern.finditer(s))
+    if len(matches) != 1:
+        raise SystemExit(f"ERROR: expected exactly one config_generate LAN fallback 192.168.1.1, found {len(matches)}")
+    s = pattern.sub(lambda m: m.group(1) + '192.168.5.1' + m.group(2), s, count=1)
+    p.write_text(s)
+    print("Patched config_generate default LAN address to 192.168.5.1")
+PYLANDEFAULT
+
+grep -Fq 'lan) ipad=${ipaddr:-"192.168.5.1"} ;;' package/base-files/files/bin/config_generate || {
+    echo "ERROR: config_generate LAN default is not 192.168.5.1" >&2
+    exit 1
+}
 
 # Target DTS directory is under the qcom/ subdirectory for Linux 6.12.
 install -D -m 0644 "$KIT_DIR/files/qcom-ipq4019-c526a.dts" \
