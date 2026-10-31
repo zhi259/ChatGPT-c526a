@@ -53,7 +53,7 @@ jobs:
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
           echo "kit=$kit" >> "$GITHUB_OUTPUT"
 
-      - name: Extract kit and remove obsolete v9 files
+      - name: Extract kit and remove retired v9/legacy experimental files
         shell: bash
         env:
           KIT_DIR: ${{ steps.archive.outputs.kit }}
@@ -68,8 +68,6 @@ jobs:
             rootfs-overlay/www/luci-static/resources/view/status/include/28_c526a_temp.js \
             rootfs-overlay/usr/libexec/rpcd/luci.c526a_temp \
             scripts/patch-temp-widget.py \
-            files/mt7615_reboot \
-            rootfs-overlay/etc/uci-defaults/90-c526a-enable-mt7615-reboot \
             rootfs-overlay/lib/upgrade/c526a-mt7615-sysupgrade \
             scripts/patch-sysupgrade-c526a.py
           rm -rf package/luci-app-c526a-wizard

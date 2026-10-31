@@ -14,6 +14,7 @@ need_file target/linux/ipq40xx/base-files/etc/board.d/02_network
 need_file target/linux/ipq40xx/base-files/etc/hotplug.d/firmware/11-ath10k-caldata
 need_file target/linux/ipq40xx/base-files/lib/upgrade/platform.sh
 need_file package/firmware/ipq-wifi/Makefile
+need_file package/base-files/files/lib/upgrade/stage2
 need_file package/base-files/files/bin/config_generate
 
 KIT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -47,6 +48,8 @@ install -D -m 0644 "$KIT_DIR/files/qcom-ipq4019-c526a.dts" \
 	target/linux/ipq40xx/files/arch/arm/boot/dts/qcom/qcom-ipq4019-c526a.dts
 install -D -m 0644 "$KIT_DIR/files/10_fix_wifi_mac" \
 	target/linux/ipq40xx/base-files/etc/hotplug.d/ieee80211/10_fix_wifi_mac
+install -D -m 0755 "$KIT_DIR/files/mt7615_reboot_service" \
+	target/linux/ipq40xx/base-files/etc/init.d/mt7615_reboot
 install -D -m 0644 "$KIT_DIR/patches/999-100-arm-add-c526a-dtb.patch" \
 	target/linux/ipq40xx/patches-6.12/999-100-arm-add-c526a-dtb.patch
 
@@ -301,4 +304,6 @@ grep -q 'ucidef_set_interfaces_lan_wan "lan2 lan3 lan4" "wan"' target/linux/ipq4
 ! grep -q 'ess-switch@c000000' target/linux/ipq40xx/files/arch/arm/boot/dts/qcom/qcom-ipq4019-c526a.dts
 ! grep -q 'edma@c080000' target/linux/ipq40xx/files/arch/arm/boot/dts/qcom/qcom-ipq4019-c526a.dts
 grep -q 'qcom-ipq4019-c526a.dtb' target/linux/ipq40xx/patches-6.12/999-100-arm-add-c526a-dtb.patch
+python3 "$KIT_DIR/scripts/patch-stage2-c526a.py" "$ROOT"
+
 echo "C526A support patch applied."

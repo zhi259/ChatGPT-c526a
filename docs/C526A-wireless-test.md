@@ -122,11 +122,19 @@ iwinfo
 
 ## 8. 普通软重启与 Web 固件升级对照
 
-本版移除了自定义 MT7615E 重启/升级卸载脚本，使用 ImmortalWrt 原生流程进行对照测试。每次操作前记录时间与操作类型：
+本版同时启用两条 C526A 专用保护：
 
-- 普通软重启：LuCI 系统重启或 SSH `reboot`。
-- 固件升级：LuCI 固件升级页执行 sysupgrade，区分是否保留配置。
-- 冷启动：断电至少 20 秒后重新上电。
+- 普通软重启：`/etc/init.d/mt7615_reboot` 的 `STOP=60` 在关机时卸载 `mt7615e`；`START=99` 启动时只做有限 PCI 存在性检查。
+- Web/CLI sysupgrade：`/lib/upgrade/99-c526a-mt7615.sh` 定义 `platform_pre_upgrade`，由 stage2 在杀停用户态进程后、切换 RAMFS 前调用。卸载失败会使 stage2 退出，不继续固件写入。
+
+这不是硬件复位，也不保证在芯片已处于异常 MCU 状态时恢复。每次操作前记录时间与操作类型：
+
+- 普通软重启：LuCI 系统重启或 SSH `reboot`。最好用有线 SSH 或串口观察 `STOP=60` 的执行。
+- 固件升级：LuCI 固件升级页执行 sysupgrade，分别测试保留配置和不保留配置。
+- 冷启动：断电至少 20 秒后重新上电，作为恢复对照。特别记录“冷启动恢复后，再执行一次普通软重启”的结果。
+- Web sysupgrade：分别测试保留配置和不保留配置；本版不保留配置测试用于验证 stage2 钩子确实来自新固件，并能在升级前执行。
+- 每次启动检查 `K60mt7615_reboot`、`S99mt7615_reboot` 是否存在；如果没有启用，检查 `/etc/uci-defaults/95-c526a-enable-mt7615-reboot` 是否运行成功。
+- 本版保留的 STOP=60 服务来自此前 v11 工具包；原记录只有一次普通软重启通过，不能据此承诺长期稳定。今天在射频已故障状态下手动 `rmmod` 后重启仍失败，是不同测试条件，不能代替正常关机阶段测试。
 
 每次启动后执行：
 
@@ -136,9 +144,12 @@ readlink -f /sys/bus/pci/devices/0000:01:00.0/of_node 2>&1
 iwinfo phy0-ap0 info 2>&1
 dmesg | grep -iE 'mt7615|mt76|firmware|eeprom|otp|Firmware is not ready' | tail -n 100
 logread | grep -iE 'mt7615|mt76|hostapd|netifd' | tail -n 100
+logread | grep -i mt7615_reboot | tail -n 50
+ls -l /etc/init.d/mt7615_reboot /etc/rc.d/K60mt7615_reboot /etc/rc.d/S99mt7615_reboot 2>&1
+cat /overlay/c526a-mt7615-reboot.log 2>/dev/null
 ```
 
-若 PCI function、driver symlink 和 `of_node` 均存在，但 PHY 为 channel 0 / txpower 0 且日志含 `Firmware is not ready for download`，应记录为“PCI/驱动已绑定但射频固件初始化失败”，不要误判成 PCI 设备完全消失。
+若 PCI function、driver symlink 和 `of_node` 均存在，但 PHY 为 channel 0 / txpower 0 且日志含 `Firmware is not ready for download`，应记录为“PCI/驱动已绑定但射频固件初始化失败”，不要误判成 PCI 设备完全消失。sysupgrade 如果卸载失败，stage2 应在日志中报告 `MT7615 safe unload failed; aborting firmware write`，本次升级不应进入固件写入阶段。
 
 ## 9. 建议回报的数据
 

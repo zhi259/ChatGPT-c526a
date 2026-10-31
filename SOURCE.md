@@ -12,7 +12,7 @@
 - Argon theme: `jerrykuku/luci-theme-argon` tag `v3.1.0`.
 - PassWall feeds: `Openwrt-Passwall/openwrt-passwall` and `Openwrt-Passwall/openwrt-passwall-packages` main branches; Xray-core recipe pinned to v26.7.28 for the Go 1.26.x toolchain.
 - APK repository configuration: intentionally unchanged in this revision at the user's request.
-- MT7615E reboot/sysupgrade workarounds: removed in this clean-baseline revision. The native ImmortalWrt reboot and sysupgrade flow is used without custom MT7615 unload hooks.
+- MT7615E reboot/sysupgrade handling: the earlier C526A v11 `STOP=60` / `START=99` init service is restored for ordinary reboot; an additional `platform_pre_upgrade` hook is included for Web/CLI sysupgrade, with stage2 abort-on-failure guard. These are workarounds, not a hardware reset or a confirmed root-cause fix.
 - MT7615E driver/firmware packages and the C526A DTS Factory EEPROM reference remain, as they are required device support rather than reboot workarounds.
 - No Factory/ART/EEPROM calibration writes, no TX-power override, no unbounded PCI rescan, and no automatic looped module reload.
 

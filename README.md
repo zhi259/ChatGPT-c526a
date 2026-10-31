@@ -1,4 +1,4 @@
-# ImmortalWrt 25.12.2 — HiWiFi C526A v11 修订版在线编译包
+# ImmortalWrt 25.12.2 — HiWiFi C526A v11 MT7615 修复保留版在线编译包
 
 本工具包用于 GitHub Actions 在线编译 HiWiFi C526A（极路由 X，Qualcomm IPQ4019，`ipq40xx/generic`）的 ImmortalWrt 25.12.2 固件。本次保持 **v11 版本号**，不是 v12。
 
@@ -26,17 +26,18 @@
 ### C526A 无线与升级保护
 
 - 保留专用 C526A DTS、`board-hiwifi_c526a.qca4019` BDF 以及 `Vfac_mac` MAC 读取修复。
-- BDF 必须为 24,300 字节，Git blob SHA-1 必须为 `ce91af5b144d1238ca4eb35dcfdf34c537f9cc7a`，否则构建失败。
-- 本版移除此前实验性的 MT7615E 普通软重启卸载/启动扫描脚本，以及 Web/CLI sysupgrade 预卸载钩子，回到 ImmortalWrt 原生重启与升级流程，便于建立无自定义干预的对照基线。
-- 保留 MT7615E 驱动、固件包、C526A DTS 和 Factory EEPROM 引用；这些属于设备正常支持，不是本次移除的实验性修复。
-- 不写 Factory、ART、EEPROM，不强制设置发射功率，不加入无限 PCIe rescan 或循环重载。
+- **恢复此前 v11 曾通过一次正常软重启验证的 `/etc/init.d/mt7615_reboot` 服务**：`STOP=60` 关机阶段尝试卸载 `mt7615e`；`START=99` 启动阶段仅在 PCI 功能缺失时进行最多三次 rescan，并要求 `of_node` 存在才尝试加载驱动。
+- 服务日志同时写入 syslog 和 `/overlay/c526a-mt7615-reboot.log`，方便在重启后核对关机卸载和启动检查是否执行。
+- **增加 Web/CLI sysupgrade 的 stage2 钩子**：`stage2` 在结束普通用户进程、切换 RAMFS 之前调用 `platform_pre_upgrade`，该钩子只卸载 `mt7615e`。如果模块卸载失败，stage2 会退出，不执行后续 RAMFS/固件写入命令，避免在卸载失败时继续刷写。
+- 普通 reboot 与 sysupgrade 是两条不同的关机路径，故分别保留 STOP=60 服务和 stage2 钩子；不依赖普通 init.d STOP 脚本来处理 sysupgrade。
+- 今天的手动 `rmmod` 测试是在 MT7615 已经处于 `Firmware is not ready for download` 故障状态后执行；卸载成功再软重启仍失败，不能证明“正常射频运行时关机阶段卸载”无效。两种场景不同，恢复曾经通过一次测试的 STOP=60 服务是有依据的，但仍需多轮实机验证。
+- 本版不移植 PandoraBox 专有 MT7615 驱动，不修改 U-Boot/MIBIB，不直接写 `MT_TOP_MISC2`，不切换 GPIO38/39/50，不写 Factory/ART/EEPROM，不强制设置发射功率，也不加入无限 PCIe rescan 或循环重载。
 
+### MT7615E 重启与 sysupgrade 修复路径
 
-### MT7615E 重启问题：本版回到原生流程
+普通 reboot 会走 init.d 关机服务；Web sysupgrade 则由 `upgraded` 执行 `/lib/upgrade/stage2`，终止进程后才切换 RAMFS。当前 v11 修订版分别覆盖这两条路径：普通关机执行 `STOP=60` 卸载服务，sysupgrade 在 stage2 的 `platform_pre_upgrade` 位置卸载驱动，并检查返回值。stage2 钩子不调用 `wifi`/ubus，因为此时用户态服务可能已经退出。若卸载失败，stage2 在进入 RAMFS 和固件写入命令前退出。
 
-普通 reboot 和 Web sysupgrade 都属于不切断主板电源的热重启，但它们不是同一条关机路径。普通 reboot 由 procd 执行常规系统关机流程；sysupgrade 则先通过 `ubus call system sysupgrade` 进入升级流程，由 procd 停止服务并把控制权交给 `/sbin/upgraded`，在 RAM 环境中执行刷写，再重启。因此，普通关机阶段的 `STOP=60` 脚本不能假定会在 sysupgrade 中执行。
-
-此前尝试过普通关机卸载模块、启动阶段有限 PCI rescan/检查，以及 sysupgrade 入口预卸载模块。本版把这些自定义 MT7615E 修复全部移除，使用原生流程建立对照基线；首次启动脚本还会清理旧版本可能保留下来的服务文件和升级辅助脚本。不代表 MT7615E 驱动或固件包被移除。建议分别记录普通 reboot、Web sysupgrade 和断电冷启动的结果。
+这两个处理都是针对 MT7615 旧固件状态的规避措施，不是硬件断电复位的等价替代。历史版本曾有一次普通软重启通过记录；本次重新纳入后必须再验证普通 reboot 和 LuCI Web sysupgrade（含不保留配置）两条路径。若冷启动恢复而软重启仍失败，再考虑 PandoraBox 的 MCU restart-handshake 或 U-Boot/PCIe reset 差异，不在本版直接做未经验证的寄存器或 GPIO 操作。
 
 ### 内置网络功能与软件包
 
@@ -60,8 +61,8 @@
 1. 下载本工具包 ZIP。
 2. 打开 GitHub 仓库 `zhi259/ChatGPT-c526a`，将 ZIP 上传到仓库根目录，文件名固定为 `c526a-immortalwrt-kit.zip`。先删除仓库根目录中旧的同名 ZIP，确保根目录只有这一个工具包 ZIP；现有自动解压 workflow 会拒绝多个 ZIP。
 3. 推送后，`Unpack C526A kit` 工作流自动解压并提交构建文件。需要仓库已配置 `UNPACK_TOKEN` Secret，且该 Token 有向当前分支写入权限。
-4. 解压提交完成后，打开 **Actions**，运行 `ImmortalWrt 25.12.2 - HiWiFi C526A v11 Revision (Chinese UI)`。构建也会在解压文件提交触发后按 workflow 路径规则自动启动。
-5. 成功后下载 Artifact：`immortalwrt-v25.12.2-hiwifi-c526a-v11-revision-zhcn`。预期包含 `factory.ubi`、`sysupgrade.bin`、`sha256sums` 和 `source-info.txt`。
+4. 解压提交完成后，打开 **Actions**，运行 `ImmortalWrt 25.12.2 - HiWiFi C526A v11 Revision MT7615 Preserve (Chinese UI)`。构建也会在解压文件提交触发后按 workflow 路径规则自动启动。
+5. 成功后下载 Artifact：`immortalwrt-v25.12.2-hiwifi-c526a-v11-mt7615-preserve-zhcn`。预期包含 `factory.ubi`、`sysupgrade.bin`、`sha256sums` 和 `source-info.txt`。
 
 如果自动解压没有运行，先检查 `UNPACK_TOKEN`、分支保护规则以及 ZIP 是否在仓库根目录且名称正确。也可以从 Actions 手动运行 `Unpack C526A kit`。
 
@@ -69,7 +70,7 @@
 
 - 首次安装前备份原厂分区、ART 校准数据和配置；确认设备确实是 HiWiFi C526A。
 - 需要验证全新默认 LAN 时，首次安装不要保留旧配置。若保留配置升级，迁移脚本只应把旧默认 `192.168.1.1` 或 `192.168.1.1/24` 改成 `192.168.5.1`，不应覆盖自定义网段；快速设置向导的说明文字应实时显示当前 LAN 地址。
-- 本版刻意不安装 MT7615E 普通重启/固件升级预卸载钩子。需要分别测试原生普通 reboot 与 LuCI Web sysupgrade；两者走不同的关机/升级阶段。
+- 本版重新启用 MT7615E 普通重启 STOP=60 服务，并加入 stage2 sysupgrade 卸载钩子。必须分别测试普通 reboot 与 LuCI Web sysupgrade；两者走不同路径。
 - 升级后检查：
 
 ```sh
@@ -78,7 +79,9 @@ ubus list | grep liquid_formula
 ubus -v list liquid_formula
 ubus call liquid_formula status '{}'
 
-dmesg | grep -iE 'mt7615|N9 Firmware|CR4 Firmware|Firmware is not ready' | tail -n 60
+dmesg | grep -iE 'C526A:|mt7615|N9 Firmware|CR4 Firmware|Firmware is not ready' | tail -n 100
+ls -l /etc/init.d/mt7615_reboot /etc/rc.d/K60mt7615_reboot /etc/rc.d/S99mt7615_reboot
+cat /overlay/c526a-mt7615-reboot.log 2>/dev/null
 iwinfo phy0-ap0 info
 ```
 
@@ -88,9 +91,9 @@ iwinfo phy0-ap0 info
 ## 目录说明
 
 - `.config`：固件目标与内置软件包配置。
-- `files/`：C526A DTS 与无线 MAC 修复源码。
+- `files/`：C526A DTS、无线 MAC 修复和 MT7615 关机服务源码。
 - `patches/`：设备树注册补丁。
-- `rootfs-overlay/`：向导、访客网络、Liquid Formula 页面与 RPC 后端、温度工具及默认配置。
+- `rootfs-overlay/`：向导、访客网络、Liquid Formula 页面与 RPC 后端、温度工具、MT7615 stage2 钩子及默认配置。
 - `scripts/build.sh`：在线源码获取、feeds 配置、设备移植、编译和镜像检查。
 - `scripts/validate-kit.sh`：编译前静态检查。
 - `.github/workflows/`：自动解压与在线编译工作流。

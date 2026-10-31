@@ -241,19 +241,36 @@ done
     echo "ERROR: C526A LuCI menu definition is missing from the image rootfs" >&2
     exit 1
 }
-for obsolete in \
-    "$ROOTFS_DIR/etc/init.d/mt7615_reboot" \
-    "$ROOTFS_DIR/etc/uci-defaults/90-c526a-enable-mt7615-reboot" \
-    "$ROOTFS_DIR/lib/upgrade/c526a-mt7615-sysupgrade"; do
-    [[ ! -e "$obsolete" ]] || {
-        echo "ERROR: removed MT7615 experimental workaround is still present in rootfs: $obsolete" >&2
-        exit 1
-    }
-done
-if grep -Fq '# C526A MT7615E sysupgrade pre-hook' "$ROOTFS_DIR/sbin/sysupgrade"; then
-    echo "ERROR: custom MT7615 sysupgrade hook is still present in rootfs /sbin/sysupgrade" >&2
+# Verify both MT7615 protection paths are included: K60/S99 for ordinary
+# soft reboot, and stage2 platform_pre_upgrade for Web/CLI sysupgrade.
+[[ -x "$ROOTFS_DIR/etc/init.d/mt7615_reboot" ]] || {
+    echo "ERROR: C526A MT7615 reboot service is missing or not executable" >&2
     exit 1
-fi
+}
+[[ -x "$ROOTFS_DIR/etc/uci-defaults/95-c526a-enable-mt7615-reboot" ]] || {
+    echo "ERROR: C526A MT7615 reboot service enable script is missing or not executable" >&2
+    exit 1
+}
+[[ -f "$ROOTFS_DIR/lib/upgrade/99-c526a-mt7615.sh" ]] || {
+    echo "ERROR: C526A MT7615 stage2 pre-upgrade hook is missing" >&2
+    exit 1
+}
+grep -Fq '# C526A MT7615 pre-upgrade failure guard' "$ROOTFS_DIR/lib/upgrade/stage2" || {
+    echo "ERROR: stage2 does not abort if the MT7615 pre-upgrade hook fails" >&2
+    exit 1
+}
+grep -Fq '        echo "<3>C526A: MT7615 safe unload failed; aborting firmware write" > /dev/kmsg' "$ROOTFS_DIR/lib/upgrade/stage2" || {
+    echo "ERROR: stage2 guard echo command is malformed or missing" >&2
+    exit 1
+}
+grep -Fq '        exit 1' "$ROOTFS_DIR/lib/upgrade/stage2" || {
+    echo "ERROR: stage2 does not exit when MT7615 unload fails" >&2
+    exit 1
+}
+grep -Fq 'mt7615e unloaded successfully before sysupgrade image write' "$ROOTFS_DIR/lib/upgrade/99-c526a-mt7615.sh" || {
+    echo "ERROR: C526A stage2 hook success check is missing" >&2
+    exit 1
+}
 [[ -x "$ROOTFS_DIR/sbin/tempinfo" ]] || {
     echo "ERROR: C526A temperature summary override /sbin/tempinfo is missing or not executable" >&2
     exit 1
