@@ -1,0 +1,153 @@
+name: Publish HiWiFi-X C526A Firmware Release
+
+on:
+  workflow_run:
+    workflows:
+      - ImmortalWrt 25.12.2 - HiWiFi C526A v11 Revision MT7615 Preserve (Chinese UI)
+    types:
+      - completed
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: '成功的 C526A build workflow Run ID（手动补发时填写）'
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: c526a-release-${{ github.event.workflow_run.id || inputs.build_run_id }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish firmware assets to HiWiFi-X-C526A-Firmware
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Select source build run
+        id: source
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+          INPUT_RUN_ID: ${{ inputs.build_run_id }}
+          BUILD_RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+          BUILD_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          BUILD_CREATED_AT: ${{ github.event.workflow_run.created_at }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ "$EVENT_NAME" == "workflow_run" ]]; then
+            run_id="$WORKFLOW_RUN_ID"
+            run_number="$BUILD_RUN_NUMBER"
+            head_sha="$BUILD_HEAD_SHA"
+            created_at="$BUILD_CREATED_AT"
+          else
+            run_id="$INPUT_RUN_ID"
+            run_number="manual-${GITHUB_RUN_NUMBER}"
+            head_sha="manual"
+            created_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          fi
+          [[ "$run_id" =~ ^[0-9]+$ ]] || { echo 'Invalid build run ID' >&2; exit 1; }
+          run_date="$(date -u -d "$created_at" +'%Y%m%d')"
+          tag="v11.1-${run_date}-run${run_number}-${head_sha:0:7}"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "run_number=$run_number" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Download successful build artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: immortalwrt-v25.12.2-hiwifi-c526a-v11-mt7615-preserve-zhcn
+          path: ${{ runner.temp }}/c526a-build-artifact
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.source.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare and verify release assets
+        id: assets
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/c526a-build-artifact
+          RELEASE_TOKEN: ${{ secrets.C526A_RELEASE_TOKEN }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ -z "${RELEASE_TOKEN:-}" ]]; then
+            echo '::error::Missing repository secret C526A_RELEASE_TOKEN.'
+            echo 'Create a fine-grained PAT with Contents: Read and write on zhi259/HiWiFi-X-C526A-Firmware, then save it in this build repository.'
+            exit 1
+          fi
+
+          out="$GITHUB_WORKSPACE/release-assets"
+          mkdir -p "$out"
+          mapfile -d '' factory_files < <(find "$ARTIFACT_DIR" -type f -iname '*hiwifi_c526a*factory.ubi' -print0)
+          mapfile -d '' sysupgrade_files < <(find "$ARTIFACT_DIR" -type f -iname '*hiwifi_c526a*sysupgrade.bin' -print0)
+
+          if (( ${#factory_files[@]} != 1 )); then
+            echo "::error::Expected exactly one C526A factory UBI image; found ${#factory_files[@]}"
+            find "$ARTIFACT_DIR" -type f -print
+            exit 1
+          fi
+          if (( ${#sysupgrade_files[@]} != 1 )); then
+            echo "::error::Expected exactly one C526A sysupgrade image; found ${#sysupgrade_files[@]}"
+            find "$ARTIFACT_DIR" -type f -print
+            exit 1
+          fi
+
+          cp -f "${factory_files[0]}" "$out/"
+          cp -f "${sysupgrade_files[0]}" "$out/"
+          source_info="$(find "$ARTIFACT_DIR" -type f -name 'source-info.txt' -print -quit)"
+          if [[ -n "$source_info" ]]; then cp -f "$source_info" "$out/"; fi
+          (
+            cd "$out"
+            sha256sum -- *.ubi *.bin > SHA256SUMS
+          )
+
+          echo 'Release assets:'
+          ls -lh "$out"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          repository: zhi259/HiWiFi-X-C526A-Firmware
+          token: ${{ secrets.C526A_RELEASE_TOKEN }}
+          tag_name: ${{ steps.source.outputs.tag }}
+          name: HiWiFi-X C526A ImmortalWrt 25.12.2 - ${{ steps.source.outputs.tag }}
+          draft: false
+          prerelease: false
+          make_latest: true
+          overwrite_files: true
+          fail_on_unmatched_files: true
+          files: release-assets/*
+          body: |
+            ## HiWiFi-X C526A Firmware
+
+            - Device: HiWiFi C526A (IPQ4019)
+            - Target: ipq40xx/generic
+            - Base: ImmortalWrt 25.12.2
+            - Build series: v11 Revision MT7615 Preserve
+            - Source build run: #${{ steps.source.outputs.run_number }}
+            - Source commit: `${{ steps.source.outputs.head_sha }}`
+
+            ### 本版内容
+            - 默认 LAN 管理地址：`192.168.5.1`，向导说明实时显示当前管理地址。
+            - 访客 Wi-Fi 默认名称：`HiWiFi-X`。
+            - Liquid Formula 中文化及 RPC 权限修复。
+            - 保留 C526A MT7615E 普通软重启 STOP=60 关机卸载服务。
+            - 保留 sysupgrade stage2 预升级卸载保护。
+
+            ### 刷机说明
+            - 已运行 ImmortalWrt 的 C526A 使用 `sysupgrade.bin`。
+            - 首次刷机或专用恢复流程才使用对应的 factory UBI 镜像。
+            - 刷机前备份配置，并核对 `SHA256SUMS`。
+
+            MT7615E 处理属于 C526A 专用规避措施，已实际设备上分别验证普通软重启和网页升级场景可行。
