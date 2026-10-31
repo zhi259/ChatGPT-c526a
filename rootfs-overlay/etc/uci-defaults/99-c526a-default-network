@@ -54,7 +54,9 @@ fi
 uci -q commit firewall
 /etc/init.d/firewall reload >/dev/null 2>&1 || true
 
-# Enable bounded, read-only MT7615E startup recovery for subsequent boots.
-# The service never unloads a working module or touches calibration partitions.
-/etc/init.d/mt7615_reboot enable >/dev/null 2>&1 || true
+# Remove legacy experimental MT7615 reboot/sysupgrade workarounds from older kits.
+/etc/init.d/mt7615_reboot disable >/dev/null 2>&1 || true
+rm -f /etc/rc.d/S99mt7615_reboot /etc/rc.d/K60mt7615_reboot
+rm -f /etc/init.d/mt7615_reboot
+rm -f /lib/upgrade/c526a-mt7615-sysupgrade
 exit 0

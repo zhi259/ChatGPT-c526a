@@ -120,19 +120,25 @@ iwinfo
 
 确认三个 PHY 都重新出现、原 SSID 与密码设置恢复原样。不要忘记这一步。
 
-## 8. 软重启恢复验证
+## 8. 普通软重启与 Web 固件升级对照
 
-三组无线测试完成并恢复原设置后，可再做两次正常软重启（不需要拔电）。每次启动后检查：
+本版移除了自定义 MT7615E 重启/升级卸载脚本，使用 ImmortalWrt 原生流程进行对照测试。每次操作前记录时间与操作类型：
+
+- 普通软重启：LuCI 系统重启或 SSH `reboot`。
+- 固件升级：LuCI 固件升级页执行 sysupgrade，区分是否保留配置。
+- 冷启动：断电至少 20 秒后重新上电。
+
+每次启动后执行：
 
 ```sh
-cat /overlay/mt7615_reboot-test.log
-
-dmesg | grep -iE 'mt7615|firmware|eeprom|otp' | tail -n 80
-
-iwinfo phy0-ap0 info
+ls -l /sys/bus/pci/devices/0000:01:00.0/driver 2>&1
+readlink -f /sys/bus/pci/devices/0000:01:00.0/of_node 2>&1
+iwinfo phy0-ap0 info 2>&1
+dmesg | grep -iE 'mt7615|mt76|firmware|eeprom|otp|Firmware is not ready' | tail -n 100
+logread | grep -iE 'mt7615|mt76|hostapd|netifd' | tail -n 100
 ```
 
-成功迹象：持久日志中出现 `unloaded mt7615e during shutdown` 和启动阶段 `driver is bound`；`dmesg` 不再出现 `Firmware is not ready for download`；2.4 GHz 仍在正常信道工作且有有效发射功率。两次均通过会比当前单次成功测试更有把握，但仍不是长期稳定性保证。
+若 PCI function、driver symlink 和 `of_node` 均存在，但 PHY 为 channel 0 / txpower 0 且日志含 `Firmware is not ready for download`，应记录为“PCI/驱动已绑定但射频固件初始化失败”，不要误判成 PCI 设备完全消失。
 
 ## 9. 建议回报的数据
 

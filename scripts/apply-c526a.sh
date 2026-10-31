@@ -22,8 +22,6 @@ install -D -m 0644 "$KIT_DIR/files/qcom-ipq4019-c526a.dts" \
 	target/linux/ipq40xx/files/arch/arm/boot/dts/qcom/qcom-ipq4019-c526a.dts
 install -D -m 0644 "$KIT_DIR/files/10_fix_wifi_mac" \
 	target/linux/ipq40xx/base-files/etc/hotplug.d/ieee80211/10_fix_wifi_mac
-install -D -m 0755 "$KIT_DIR/files/mt7615_reboot" \
-	target/linux/ipq40xx/base-files/etc/init.d/mt7615_reboot
 install -D -m 0644 "$KIT_DIR/patches/999-100-arm-add-c526a-dtb.patch" \
 	target/linux/ipq40xx/patches-6.12/999-100-arm-add-c526a-dtb.patch
 

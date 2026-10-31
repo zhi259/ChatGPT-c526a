@@ -67,7 +67,11 @@ jobs:
             rootfs-overlay/usr/libexec/rpcd/luci.c526a_traffic \
             rootfs-overlay/www/luci-static/resources/view/status/include/28_c526a_temp.js \
             rootfs-overlay/usr/libexec/rpcd/luci.c526a_temp \
-            scripts/patch-temp-widget.py
+            scripts/patch-temp-widget.py \
+            files/mt7615_reboot \
+            rootfs-overlay/etc/uci-defaults/90-c526a-enable-mt7615-reboot \
+            rootfs-overlay/lib/upgrade/c526a-mt7615-sysupgrade \
+            scripts/patch-sysupgrade-c526a.py
           rm -rf package/luci-app-c526a-wizard
           echo '解压后的仓库文件：'
           find . -maxdepth 5 -type f \

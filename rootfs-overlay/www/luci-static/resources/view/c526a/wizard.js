@@ -44,6 +44,28 @@ function setVisible(id, visible) {
 		el.style.display = visible ? '' : 'none';
 }
 
+function normalizeLanInput(raw) {
+	if (Array.isArray(raw))
+		raw = raw.length ? raw[0] : '';
+
+	if (typeof raw !== 'string')
+		raw = raw == null ? '' : String(raw);
+
+	raw = raw.trim();
+
+	/* Handle legacy/list values serialized as ["192.168.1.1/24"]. */
+	if (raw.charAt(0) === '[') {
+		try {
+			var parsed = JSON.parse(raw);
+			if (Array.isArray(parsed))
+				raw = String(parsed[0] || '').trim();
+		} catch (e) {}
+	}
+
+	var match = raw.match(/^((?:\d{1,3}\.){3}\d{1,3})(?:\/\d{1,2})?$/);
+	return match ? match[1] : '192.168.5.1';
+}
+
 function validIPv4(value) {
 	var parts = value.split('.');
 	if (parts.length !== 4)
@@ -123,7 +145,7 @@ return view.extend({
 			]),
 
 			section(_('第 2 步：设置路由器管理地址'), _('默认管理地址为 192.168.5.1。请确认它与上级路由器的网段不冲突。'), [
-				field('c526a_lan_ip', _('路由器 LAN 地址'), uci.get('network', 'lan', 'ipaddr') || '192.168.5.1', 'text', '192.168.5.1')
+				field('c526a_lan_ip', _('路由器 LAN 地址（仅填写 IP）'), normalizeLanInput(uci.get('network', 'lan', 'ipaddr')), 'text', _('例如 192.168.5.1'))
 			]),
 
 			section(_('第 3 步：设置 Wi-Fi'), _('建议给 2.4 GHz 和 5 GHz 使用不同的名称，方便识别；两个 5 GHz 无线模块可以使用相同名称和密码。此向导不修改信道和发射功率。'), [

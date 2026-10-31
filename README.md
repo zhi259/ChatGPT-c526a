@@ -27,9 +27,16 @@
 
 - 保留专用 C526A DTS、`board-hiwifi_c526a.qca4019` BDF 以及 `Vfac_mac` MAC 读取修复。
 - BDF 必须为 24,300 字节，Git blob SHA-1 必须为 `ce91af5b144d1238ca4eb35dcfdf34c537f9cc7a`，否则构建失败。
-- 保留 `/etc/init.d/mt7615_reboot` 普通软重启处理：关机阶段尝试卸载 MT7615E，启动阶段只进行有限次数 PCI 检查/恢复，不进行校准数据写入。
-- 保留 Web/CLI sysupgrade 前的 MT7615E 预卸载钩子。只处理 `radio0`/`mt7615e`，不关闭两个 5 GHz radio；卸载失败时中止升级，不继续刷写。
+- 本版移除此前实验性的 MT7615E 普通软重启卸载/启动扫描脚本，以及 Web/CLI sysupgrade 预卸载钩子，回到 ImmortalWrt 原生重启与升级流程，便于建立无自定义干预的对照基线。
+- 保留 MT7615E 驱动、固件包、C526A DTS 和 Factory EEPROM 引用；这些属于设备正常支持，不是本次移除的实验性修复。
 - 不写 Factory、ART、EEPROM，不强制设置发射功率，不加入无限 PCIe rescan 或循环重载。
+
+
+### MT7615E 重启问题：本版回到原生流程
+
+普通 reboot 和 Web sysupgrade 都属于不切断主板电源的热重启，但它们不是同一条关机路径。普通 reboot 由 procd 执行常规系统关机流程；sysupgrade 则先通过 `ubus call system sysupgrade` 进入升级流程，由 procd 停止服务并把控制权交给 `/sbin/upgraded`，在 RAM 环境中执行刷写，再重启。因此，普通关机阶段的 `STOP=60` 脚本不能假定会在 sysupgrade 中执行。
+
+此前尝试过普通关机卸载模块、启动阶段有限 PCI rescan/检查，以及 sysupgrade 入口预卸载模块。本版把这些自定义 MT7615E 修复全部移除，使用原生流程建立对照基线；首次启动脚本还会清理旧版本可能保留下来的服务文件和升级辅助脚本。不代表 MT7615E 驱动或固件包被移除。建议分别记录普通 reboot、Web sysupgrade 和断电冷启动的结果。
 
 ### 首页和状态页
 
@@ -55,7 +62,7 @@
 
 - 首次安装前备份原厂分区、ART 校准数据和配置；确认设备确实是 HiWiFi C526A。
 - 需要验证全新默认 LAN 时，首次安装不要保留旧配置。若保留配置升级，迁移脚本只应把旧默认 `192.168.1.1` 改成 `192.168.5.1`，不应覆盖自定义网段。
-- Web/CLI sysupgrade 的 MT7615E 预卸载钩子来自 ImmortalWrt 25.12.2 `/sbin/sysupgrade` 的精确锚点补丁，但仍需下一次 C526A Web 升级实测；升级前保留有线管理连接。
+- 本版刻意不安装 MT7615E 普通重启/固件升级预卸载钩子。需要分别测试原生普通 reboot 与 LuCI Web sysupgrade；两者走不同的关机/升级阶段。
 - 升级后检查：
 
 ```sh
@@ -64,20 +71,19 @@ ubus list | grep liquid_formula
 ubus -v list liquid_formula
 ubus call liquid_formula status '{}'
 
-logread | grep -i c526a-sysupgrade
 dmesg | grep -iE 'mt7615|N9 Firmware|CR4 Firmware|Firmware is not ready' | tail -n 60
 iwinfo phy0-ap0 info
 ```
 
-- 正常情况下 RPC 文件权限为 `-rwxr-xr-x`，`ubus list` 可见 `liquid_formula`，状态调用返回 JSON；MT7615E 在 sysupgrade 后应正常初始化并有实际信道。
+- 正常情况下 RPC 文件权限为 `-rwxr-xr-x`，`ubus list` 可见 `liquid_formula`，状态调用返回 JSON。无线测试需记录普通 reboot 和 Web sysupgrade 两种路径的区别。
 - 编译成功不等于硬件验证完成。必须分别检查 2.4 GHz、5 GHz-A、5 GHz-B 无线连接、访客网络隔离、LAN/WAN、温度显示、LuCI 页面和软件包清单。
 
 ## 目录说明
 
 - `.config`：固件目标与内置软件包配置。
-- `files/`：C526A DTS、无线 MAC 与关机处理源码。
+- `files/`：C526A DTS 与无线 MAC 修复源码。
 - `patches/`：设备树注册补丁。
-- `rootfs-overlay/`：向导、访客网络、Liquid Formula 页面与 RPC 后端、温度工具、升级辅助脚本。
+- `rootfs-overlay/`：向导、访客网络、Liquid Formula 页面与 RPC 后端、温度工具及默认配置。
 - `scripts/build.sh`：在线源码获取、feeds 配置、设备移植、编译和镜像检查。
 - `scripts/validate-kit.sh`：编译前静态检查。
 - `.github/workflows/`：自动解压与在线编译工作流。

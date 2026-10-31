@@ -31,21 +31,25 @@ for rel in \
     usr/share/luci/menu.d/luci-app-liquid-formula.json \
     usr/share/rpcd/acl.d/luci-app-c526a-wizard.json \
     usr/share/luci/menu.d/luci-app-c526a-wizard.json \
-    sbin/tempinfo \
-    lib/upgrade/c526a-mt7615-sysupgrade; do
+    sbin/tempinfo; do
     [[ -f "$WIZARD_OVERLAY/$rel" ]] || {
         echo "ERROR: required C526A LuCI overlay file is missing: $WIZARD_OVERLAY/$rel" >&2
         exit 1
     }
 done
 mkdir -p "$SOURCE_DIR/files"
+# Remove remnants from an earlier kit in case SOURCE_DIR is reused locally.
+rm -f \
+    "$SOURCE_DIR/files/etc/init.d/mt7615_reboot" \
+    "$SOURCE_DIR/files/etc/uci-defaults/90-c526a-enable-mt7615-reboot" \
+    "$SOURCE_DIR/files/lib/upgrade/c526a-mt7615-sysupgrade" \
+    "$SOURCE_DIR/target/linux/ipq40xx/base-files/etc/init.d/mt7615_reboot"
 # Retire v10's redundant overview card and RPC helper even if SOURCE_DIR is reused.
 rm -f \
     "$SOURCE_DIR/files/www/luci-static/resources/view/status/include/28_c526a_temp.js" \
     "$SOURCE_DIR/files/usr/libexec/rpcd/luci.c526a_temp"
 cp -a "$WIZARD_OVERLAY/." "$SOURCE_DIR/files/"
 chmod 0755 "$SOURCE_DIR/files/sbin/tempinfo"
-chmod 0755 "$SOURCE_DIR/files/lib/upgrade/c526a-mt7615-sysupgrade"
 chmod 0755 "$SOURCE_DIR/files/usr/libexec/rpcd/liquid_formula"
 # Remove stale package copies; the wizard is an overlay, not a separate APK package.
 rm -rf "$SOURCE_DIR/package/luci-app-c526a-wizard" \
@@ -159,16 +163,6 @@ for pkgdir in \
 done
 
 bash "$KIT_DIR/scripts/apply-c526a.sh" "$SOURCE_DIR"
-# Patch the exact ImmortalWrt 25.12.2 sysupgrade entry point used by both LuCI and CLI.
-python3 "$KIT_DIR/scripts/patch-sysupgrade-c526a.py" "$SOURCE_DIR"
-grep -Fq '# C526A MT7615E sysupgrade pre-hook' "$SOURCE_DIR/package/base-files/files/sbin/sysupgrade" || {
-    echo "ERROR: C526A MT7615E sysupgrade pre-hook was not installed" >&2
-    exit 1
-}
-[[ -x "$SOURCE_DIR/files/lib/upgrade/c526a-mt7615-sysupgrade" ]] || {
-    echo "ERROR: C526A MT7615E sysupgrade helper is missing or not executable" >&2
-    exit 1
-}
 cp "$KIT_DIR/.config" .config
 make defconfig
 # These kernel modules must be part of this exact custom kernel build. Never rely on
@@ -240,14 +234,19 @@ done
     echo "ERROR: C526A LuCI menu definition is missing from the image rootfs" >&2
     exit 1
 }
-[[ -x "$ROOTFS_DIR/lib/upgrade/c526a-mt7615-sysupgrade" ]] || {
-    echo "ERROR: C526A MT7615E sysupgrade pre-hook helper is missing or not executable" >&2
+for obsolete in \
+    "$ROOTFS_DIR/etc/init.d/mt7615_reboot" \
+    "$ROOTFS_DIR/etc/uci-defaults/90-c526a-enable-mt7615-reboot" \
+    "$ROOTFS_DIR/lib/upgrade/c526a-mt7615-sysupgrade"; do
+    [[ ! -e "$obsolete" ]] || {
+        echo "ERROR: removed MT7615 experimental workaround is still present in rootfs: $obsolete" >&2
+        exit 1
+    }
+done
+if grep -Fq '# C526A MT7615E sysupgrade pre-hook' "$ROOTFS_DIR/sbin/sysupgrade"; then
+    echo "ERROR: custom MT7615 sysupgrade hook is still present in rootfs /sbin/sysupgrade" >&2
     exit 1
-}
-grep -Fq '# C526A MT7615E sysupgrade pre-hook' "$ROOTFS_DIR/sbin/sysupgrade" || {
-    echo "ERROR: final rootfs /sbin/sysupgrade does not contain the C526A MT7615E pre-hook" >&2
-    exit 1
-}
+fi
 [[ -x "$ROOTFS_DIR/sbin/tempinfo" ]] || {
     echo "ERROR: C526A temperature summary override /sbin/tempinfo is missing or not executable" >&2
     exit 1
