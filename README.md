@@ -1,6 +1,6 @@
 # ImmortalWrt 25.12.2 — HiWiFi C526A v11 MT7615 修复保留版在线编译包
 
-本工具包用于 GitHub Actions 在线编译 HiWiFi C526A（极路由 X，Qualcomm IPQ4019，`ipq40xx/generic`）的 ImmortalWrt 25.12.2 固件。本次保持 **v11 版本号**，不是 v12。
+本工具包用于 GitHub Actions 在线编译 HiWiFi C526A（极路由 X，Qualcomm IPQ4019，`ipq40xx/generic`）的 ImmortalWrt 25.12.2 固件。本次保持 **v11 版本号**。
 
 > 这是源码与构建工具包，不是已经编译完成的固件。本地仅完成了脚本、文件结构、JSON、Shell 和 JavaScript 静态检查；完整交叉编译必须由 GitHub Actions 执行，实机刷写和无线升级流程仍需在 C526A 上验收。
 
